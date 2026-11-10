@@ -422,7 +422,14 @@ const GLB_NAMES = {
   castShadow: ['Carpaint_0', 'EXT_BODY_2_0', 'EXT_CARBON_0', 'EXT_Tyre_0', 'EXt_GLASS_0'],
 };
 
-const nameEnds = (o, list) => list.some((n) => n && o.name.endsWith(n));
+// GLTFLoader renames a node whose name is already taken ("X" -> "X_1") and every mesh node in this file shares its
+// name with its parent group, so Object3D.name ends in "_1". The original glTF name is kept in userData.name.
+const glbName = (o) => (o.userData && o.userData.name) || o.name || '';
+const nameEnds = (o, list) => { const n = glbName(o); return list.some((x) => x && n.endsWith(x)); };
+
+// TEMPORARY: shows which car is on screen ("BMW GLB LOADED" / "PROCEDURAL FALLBACK"). Set to false to remove.
+const SHOW_CAR_SOURCE_BADGE = true;
+const glog = (...a) => console.log('[aether][glb]', ...a);
 
 /**
  * Loads the real car and returns an object that follows the CAR CONTRACT. Nothing is added to a scene.
@@ -442,18 +449,29 @@ export async function loadCarFromGLB(url = GLB_URL, opts = {}) {
   const draco = new DRACOLoader().setDecoderPath(DRACO_DECODER_PATH);
   const loader = new GLTFLoader().setDRACOLoader(draco);
 
+  glog('loading started:', new URL(url, location.href).href);
+  const t0 = performance.now();
+  let lastLogged = -1;
   let gltf;
   try {
     gltf = await withTimeoutMs(new Promise((resolve, reject) => {
       loader.load(
         url, resolve,
-        (e) => { if (e.lengthComputable && e.total) opts.onProgress?.(e.loaded / e.total); },
+        (e) => {
+          if (e.lengthComputable && e.total) opts.onProgress?.(e.loaded / e.total);
+          const step = Math.floor(e.loaded / 4e6);   // log every ~4 MB (total is unknown when the server compresses)
+          if (step !== lastLogged) {
+            lastLogged = step;
+            glog(`download ${(e.loaded / 1e6).toFixed(1)} MB` + (e.lengthComputable ? ` / ${(e.total / 1e6).toFixed(1)} MB (${Math.round(100 * e.loaded / e.total)}%)` : ' (total unknown)'));
+          }
+        },
         reject,
       );
     }), GLB_TIMEOUT_MS, 'GLB load timeout');
   } finally {
     draco.dispose();
   }
+  glog(`parsed OK in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
   if (opts.signal?.cancelled) { disposeObject(gltf.scene); throw new Error('GLB load cancelled'); }
 
   const low = opts.quality === 'low';
@@ -475,6 +493,7 @@ export async function loadCarFromGLB(url = GLB_URL, opts = {}) {
   if (!meshes.length) throw new Error('GLB has no meshes');
 
   const byEnd = (list) => meshes.filter((m) => nameEnds(m, list));
+  glog(`${meshes.length} meshes; sample names: Object3D.name="${meshes[0].name}" glTF name="${glbName(meshes[0])}"`);
   byEnd(GLB_NAMES.ignoreBounds).forEach((m) => { m.userData.noBounds = true; m.frustumCulled = false; });
 
   const seen = new Set();
@@ -502,7 +521,7 @@ export async function loadCarFromGLB(url = GLB_URL, opts = {}) {
   // ---- Fit: centre on the axle mid-point (x/z of the origin) and rest the tyres on y = 0, no scaling here ----
   const all = measure();
   if (all.isEmpty()) throw new Error('GLB bounding box is empty');
-  const tyres = measure((m) => m.name.endsWith(GLB_NAMES.tyre));
+  const tyres = measure((m) => glbName(m).endsWith(GLB_NAMES.tyre));
   const haveTyres = !tyres.isEmpty();
 
   // Tyre mesh = four tyres: radius from its height; axle lines from its extent along the length (z after the yaw).
@@ -516,6 +535,10 @@ export async function loadCarFromGLB(url = GLB_URL, opts = {}) {
   orient.position.set(-centreX, -floor, -centreZ);
 
   const size = measure().getSize(new THREE.Vector3());
+  glog(`name matches: tyre=${haveTyres ? 'found' : 'NOT FOUND'}, ignoredBounds=${byEnd(GLB_NAMES.ignoreBounds).length}, ` +
+    `tail=${byEnd(GLB_NAMES.tail).length}, head=${byEnd(GLB_NAMES.head).length}; ` +
+    `size (w x h x l) = ${size.x.toFixed(2)} x ${size.y.toFixed(2)} x ${size.z.toFixed(2)} m, wheelRadius=${R.toFixed(3)}, ` +
+    `wheelbase=${(axleFront - axleRear).toFixed(2)}`);
   if (!(size.x > 1 && size.x < 4 && size.y > 0.8 && size.y < 2.5 && size.z > 3 && size.z < 7)) {
     throw new Error(`GLB size ${size.x.toFixed(2)} x ${size.y.toFixed(2)} x ${size.z.toFixed(2)} m is not a car in metres`);
   }
@@ -603,10 +626,13 @@ export async function initCarFromGLB(stage, opts = {}) {
       stage.scene.add(car.root);
       try { stage.renderer?.compile(stage.scene, stage.camera); } catch { /* non-fatal */ }
       stage.requestRender?.();
+      glog(`model added to scene; fit scale=${k.toFixed(3)}, wheelRadius=${car.wheelRadius.toFixed(3)}, ` +
+        `children of scene=${stage.scene.children.length}`);
       reportCarSource('glb');
       return car;
     } catch (err) {
-      console.warn('[aether] GLB car failed, using the procedural car.', err);
+      console.error('[aether][glb] FALLBACK to procedural car. Reason:', err && err.message || err);
+      console.error(err && err.stack || err);
       reportCarSource('procedural', err);
     }
   }
@@ -614,18 +640,20 @@ export async function initCarFromGLB(stage, opts = {}) {
   return opts.signal?.cancelled ? null : initCar(stage, opts);
 }
 
-/** Records which car is on screen: <html data-car="glb|procedural">. With ?debug the reason is also printed on the page
- *  (phones have no easy console). */
+/** Records which car is on screen: <html data-car="glb|procedural"> and a TEMPORARY on-page badge (see SHOW_CAR_SOURCE_BADGE). */
 function reportCarSource(kind, err) {
   document.documentElement.dataset.car = kind;
   if (err) window.__aetherCarError = String(err && err.message || err);
-  if (kind === 'procedural' && new URLSearchParams(location.search).has('debug')) {
-    const d = document.createElement('div');
-    d.textContent = 'GLB failed: ' + (err && err.message || err);
-    d.style.cssText = 'position:fixed;left:8px;right:8px;top:48px;z-index:99;padding:8px 10px;font:12px/1.35 monospace;' +
-      'color:#fff;background:rgba(160,20,20,.85);border-radius:6px;pointer-events:none;word-break:break-word';
-    document.body.appendChild(d);
-  }
+  if (!SHOW_CAR_SOURCE_BADGE) return;
+  document.getElementById('aether-car-badge')?.remove();
+  const ok = kind === 'glb';
+  const d = document.createElement('div');
+  d.id = 'aether-car-badge';
+  d.textContent = (ok ? 'BMW GLB LOADED' : 'PROCEDURAL FALLBACK') + (!ok && err ? ' — ' + (err.message || err) : '');
+  d.style.cssText = 'position:fixed;left:8px;right:8px;top:calc(env(safe-area-inset-top,0px) + 40px);z-index:99;padding:6px 10px;' +
+    'font:11px/1.35 monospace;color:#fff;border-radius:6px;pointer-events:none;word-break:break-word;' +
+    'background:' + (ok ? 'rgba(20,120,60,.85)' : 'rgba(170,25,25,.88)');
+  document.body.appendChild(d);
 }
 
 function withTimeoutMs(promise, ms, message) {

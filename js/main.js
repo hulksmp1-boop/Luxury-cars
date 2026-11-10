@@ -94,13 +94,16 @@ async function initCar(bounds) {
   try {
     const mod = await withTimeout(import('./car.js'), 10000);
     if (stageAborted || !stage) return;
+    console.log('[aether] initCar: car.js imported, calling initCarFromGLB()');
     car = await mod.initCarFromGLB(stage, {
       bounds,
       onProgress: (f) => setProgress(0.9 * f),
       signal: { get cancelled() { return stageAborted; } },
     });
+    console.log('[aether] initCar: done, car source =', car && car.source || 'procedural');
   } catch (err) {
-    console.warn('[aether] Car failed to load, continuing without it.', err);
+    console.error('[aether] Car failed to load, continuing without it.', err && err.stack || err);
+    document.documentElement.dataset.car = 'none';
     car = null;
   }
 }
