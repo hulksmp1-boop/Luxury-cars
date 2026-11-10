@@ -5,7 +5,8 @@
 //
 //   {
 //     root:        THREE.Group,        // pivot, origin on ground between the axles, car faces +Z
-//     wheels:      THREE.Object3D[],   // spin around local X (FL, FR, RL, RR)
+//     wheels:      THREE.Object3D[],   // spin groups (FL, FR, RL, RR). Procedural car: spin around local X.
+//                                      // GLB car: groups at the real wheel centres; update() turns each about its axle axis.
 //     wheelRadius: number,             // metres; angle = distance / wheelRadius
 //     anchors: { front, rear, side, wheel, headlight },  // camera targets, car-local THREE.Vector3
 //     lights:  { head: Object3D[], tail: Object3D[] },   // emissive parts to glow
@@ -26,6 +27,7 @@
 
 import * as THREE from 'three'; // pinned in the importmap in index.html
 import { lightLevels } from './scenes.js'; // light timing (pure, no dependencies)
+import { locateWheels, splitByWheel } from './wheels.js'; // GLB wheel separation maths (pure, no dependencies)
 
 const WHEEL_RADIUS = 0.34;
 const WHEEL_X = 0.855;     // wheel centre, distance from the centre line
@@ -402,8 +404,11 @@ export function initCar(stage, opts = {}) {
 // Facts about assets/models/bmw_m5_f90.glb, read from the file (not assumed):
 //  - 1 unit = 1 metre (body 4.95 m long). Y is up. The car FACES +X, so its width runs along Z.
 //  - The scene root carries baked matrices; the net world transform is already Y-up, so only a yaw is needed.
-//  - There are NO wheel nodes. The four wheels are merged, per material, into shared meshes (tyre, rim, disc,
-//    caliper...), so a wheel cannot be spun without splitting that geometry. `wheels` is therefore empty for now.
+//  - There are NO wheel nodes. The four wheels are merged, per material, into shared meshes (tyre, rims, discs,
+//    caliper...). buildGLBWheels() below splits those meshes triangle by triangle into one piece per wheel (sharing the
+//    original vertex buffers, materials and textures) and hangs each wheel on its own pivot at the real axle centre.
+//    The brake calipers are not in the list of spinning meshes, so they stay with the car.
+//  - Axle axis = the car's width (model Z). Wheel centres, radius and width are measured from the tyre vertices.
 //  - One 18-vertex mesh ("gauge_emissive") is a degenerate line stretching 9 m behind the car; it has no area and
 //    draws nothing, but it must not count towards the bounding box.
 //  - Only two materials author an emission: "reartail" (red) and "material_95" (amber, front).
@@ -420,6 +425,11 @@ const GLB_NAMES = {
   tail: ['reartail_0'],                     // authored red emissive
   head: ['LightEmissiveA_Material_0', '6738_1111_0'],  // front light meshes (listed for the contract, not driven yet)
   castShadow: ['Carpaint_0', 'EXT_BODY_2_0', 'EXT_CARBON_0', 'EXT_Tyre_0', 'EXt_GLASS_0'],
+  // Meshes that turn with the wheel: tyre, every rim layer, both brake discs. Each is a merged mesh holding all
+  // four wheels (the discs: two). 'Brake_Caliper_001_0' is left out on purpose: calipers do not rotate.
+  // Anything not listed here is never touched. Add a name to make another merged wheel part spin.
+  wheelSpin: ['EXT_Tyre_0', 'M_RimBadge_Max_0', 'M_Rim_Secondary_Max_0', 'M_Rim_Main_Max_0', 'M_Rim_NoTint_Max_0',
+    'rimsiulver_0', 'Rim_Blurred_0', 'Brake_Disk_001_0', 'Brake_Disk_rear_001_0'],
 };
 
 // GLTFLoader renames a node whose name is already taken ("X" -> "X_1") and every mesh node in this file shares its
@@ -427,8 +437,6 @@ const GLB_NAMES = {
 const glbName = (o) => (o.userData && o.userData.name) || o.name || '';
 const nameEnds = (o, list) => { const n = glbName(o); return list.some((x) => x && n.endsWith(x)); };
 
-// TEMPORARY: shows which car is on screen ("BMW GLB LOADED" / "PROCEDURAL FALLBACK"). Set to false to remove.
-const SHOW_CAR_SOURCE_BADGE = true;
 const glog = (...a) => console.log('[aether][glb]', ...a);
 
 /**
@@ -556,6 +564,18 @@ export async function loadCarFromGLB(url = GLB_URL, opts = {}) {
   blob.userData.noBounds = true;
   root.add(blob);
 
+  // ---- Wheels: split the merged wheel meshes into four spinning assemblies. Non-fatal: on any problem the car is
+  //      left exactly as loaded (wheels simply do not turn) and the reason goes to the console. ----
+  let rig = null;
+  try {
+    const built = buildGLBWheels(orient, meshes);
+    if (built.error) console.warn('[aether][glb] wheels NOT separated:', built.error);
+    else { rig = built; built.report.forEach((l) => glog('wheels:', l)); }
+  } catch (err) {
+    console.error('[aether][glb] wheel separation failed, wheels will not turn:', err && err.stack || err);
+    rig = null;
+  }
+
   // ---- Lights: only what the file authors. Tail = the red emissive material; head meshes are listed, not driven ----
   const head = byEnd(GLB_NAMES.head);
   const tail = byEnd(GLB_NAMES.tail);
@@ -582,24 +602,34 @@ export async function loadCarFromGLB(url = GLB_URL, opts = {}) {
     headlight: new THREE.Vector3(0.6, 0.6, halfL - 0.15),
   };
 
-  function update() { /* wheels are merged into shared meshes: nothing to spin yet */ }
+  // Rolling without slipping: angle = distance / radius, with the distance the road has moved (world metres) and the
+  // radius in world metres too. initCarFromGLB multiplies api.wheelRadius by the fit scale after loading, so it is
+  // read at call time. The axis of each wheel was signed in buildGLBWheels so that a positive angle rolls the car
+  // toward +Z, the same convention as the procedural car.
+  function update(distance = 0) {
+    if (!rig) return;
+    const a = (distance / api.wheelRadius) % (Math.PI * 2);
+    for (let i = 0; i < rig.spins.length; i++) rig.spins[i].quaternion.setFromAxisAngle(rig.axes[i], a);
+  }
 
   function dispose() {
     root.removeFromParent();
-    disposeObject(gltf.scene);
+    disposeObject(orient);                       // the original meshes and the split wheel pieces (they share materials)
+    rig?.orphans.forEach((g) => g.dispose());    // geometries of merged meshes that were replaced by wheel pieces
     blobGeo.dispose(); blobMat.dispose(); blobTex.dispose();
   }
 
   setLightProgress(0);
-  return {
-    root, wheels: [], wheelRadius: R, anchors,
+  const api = {
+    root, wheels: rig ? rig.spins : [], wheelRadius: rig ? rig.radius : R, anchors,
     lights: { head, tail },
     parts: { model: gltf.scene },
     source: 'glb',
     // Exposed for the report and for ?debug; read-only facts about the model as loaded.
-    info: { size: size.toArray(), wheelRadius: R, axleFront, axleRear, track, meshes: meshes.length },
+    info: { size: size.toArray(), wheelRadius: R, axleFront, axleRear, track, meshes: meshes.length, wheels: rig ? rig.summary : null },
     update, setLightProgress, setLightsDegraded, dispose,
   };
+  return api;
 }
 
 /**
@@ -640,20 +670,10 @@ export async function initCarFromGLB(stage, opts = {}) {
   return opts.signal?.cancelled ? null : initCar(stage, opts);
 }
 
-/** Records which car is on screen: <html data-car="glb|procedural"> and a TEMPORARY on-page badge (see SHOW_CAR_SOURCE_BADGE). */
+/** Records which car is on screen as <html data-car="glb|procedural"> (no visible UI) and keeps the failure reason for debugging. */
 function reportCarSource(kind, err) {
   document.documentElement.dataset.car = kind;
   if (err) window.__aetherCarError = String(err && err.message || err);
-  if (!SHOW_CAR_SOURCE_BADGE) return;
-  document.getElementById('aether-car-badge')?.remove();
-  const ok = kind === 'glb';
-  const d = document.createElement('div');
-  d.id = 'aether-car-badge';
-  d.textContent = (ok ? 'BMW GLB LOADED' : 'PROCEDURAL FALLBACK') + (!ok && err ? ' — ' + (err.message || err) : '');
-  d.style.cssText = 'position:fixed;left:8px;right:8px;top:calc(env(safe-area-inset-top,0px) + 40px);z-index:99;padding:6px 10px;' +
-    'font:11px/1.35 monospace;color:#fff;border-radius:6px;pointer-events:none;word-break:break-word;' +
-    'background:' + (ok ? 'rgba(20,120,60,.85)' : 'rgba(170,25,25,.88)');
-  document.body.appendChild(d);
 }
 
 function withTimeoutMs(promise, ms, message) {
@@ -662,6 +682,158 @@ function withTimeoutMs(promise, ms, message) {
     promise,
     new Promise((_, reject) => { t = setTimeout(() => reject(new Error(message)), ms); }),
   ]).finally(() => clearTimeout(t));
+}
+
+/** Vertex positions of a geometry transformed by a Matrix4, as a flat x,y,z Float32Array. */
+function framePoints(geometry, M) {
+  const p = geometry.getAttribute('position');
+  const e = M.elements;
+  const out = new Float32Array(p.count * 3);
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    out[i * 3] = e[0] * x + e[4] * y + e[8] * z + e[12];
+    out[i * 3 + 1] = e[1] * x + e[5] * y + e[9] * z + e[13];
+    out[i * 3 + 2] = e[2] * x + e[6] * y + e[10] * z + e[14];
+  }
+  return out;
+}
+
+/** A geometry that draws only `triangles` (vertex indices, 3 per triangle) of `src`. Vertex buffers are shared, not copied. */
+function subsetGeometry(src, triangles) {
+  const g = new THREE.BufferGeometry();
+  for (const [name, attr] of Object.entries(src.attributes)) g.setAttribute(name, attr);
+  const count = src.getAttribute('position').count;
+  g.setIndex(new THREE.BufferAttribute(count > 65535 ? triangles : Uint16Array.from(triangles), 1));
+  const pos = src.getAttribute('position');
+  const box = new THREE.Box3(), v = new THREE.Vector3();
+  for (let i = 0; i < triangles.length; i++) box.expandByPoint(v.fromBufferAttribute(pos, triangles[i]));
+  g.boundingBox = box;
+  g.boundingSphere = box.getBoundingSphere(new THREE.Sphere());
+  return g;
+}
+
+/**
+ * Separates the four wheels of the merged BMW meshes and puts each on its own pivot.
+ *
+ * What it does (all in the frame of `orient`, i.e. the model's own axes after its baked matrices: +X front, Y up):
+ *  1. Takes the vertices of the tyre mesh, finds the four tyres and measures centre, radius, width and axle axis
+ *     of each (wheels.js: locateWheels).
+ *  2. For every mesh in GLB_NAMES.wheelSpin, assigns each triangle to the wheel whose cylinder contains it
+ *     (wheels.js: splitByWheel). Triangles outside every wheel cylinder stay where they were.
+ *  3. Builds one mesh per wheel and part. It shares the original vertex buffers (no copy, no resample), material and
+ *     textures; only a new index list is created. Its matrix is T(-centre) * (original mesh -> frame matrix), so under
+ *     its pivot (placed at the wheel centre) it renders exactly where the original did.
+ *  4. Hierarchy: orient > pivot (at the wheel centre) > spin (rotated each frame) > parts.
+ *     Rotating `spin` about the axle axis through the centre turns the wheel in place: it cannot drift or change height.
+ *
+ * Nothing is added to or removed from the scene until every piece has been built successfully.
+ * @returns {{ error: string } | { spins: THREE.Group[], axes: THREE.Vector3[], radius: number, orphans: THREE.BufferGeometry[], report: string[], summary: object }}
+ */
+function buildGLBWheels(orient, meshes) {
+  orient.updateMatrixWorld(true);
+  const inv = orient.matrixWorld.clone().invert();
+  const toFrame = (m) => inv.clone().multiply(m.matrixWorld);   // mesh space -> frame of `orient`
+
+  const cand = meshes.filter((m) => nameEnds(m, GLB_NAMES.wheelSpin) && !Array.isArray(m.material) && m.geometry && m.geometry.getAttribute('position'));
+  const tyreMesh = cand.find((m) => glbName(m).endsWith(GLB_NAMES.tyre));
+  if (!tyreMesh) return { error: 'tyre mesh not found' };
+
+  const loc = locateWheels(framePoints(tyreMesh.geometry, toFrame(tyreMesh)));
+  if (!loc.ok) return { error: loc.reason };
+
+  // Name each wheel from where it sits on the finished car (root frame: +Z front, +X left) and sign its axle axis
+  // so that a positive angle rolls the car toward +Z.
+  const mean = new THREE.Vector3();
+  loc.wheels.forEach((w) => mean.add(new THREE.Vector3().fromArray(w.center)));
+  mean.multiplyScalar(1 / loc.wheels.length);
+  const rigs = loc.wheels.map((w) => {
+    const c = new THREE.Vector3().fromArray(w.center);
+    const rel = c.clone().sub(mean).applyQuaternion(orient.quaternion);
+    const axis = new THREE.Vector3().fromArray(w.axis);
+    if (axis.clone().applyQuaternion(orient.quaternion).x < 0) axis.negate();
+    return { w, center: c, axis, key: (rel.z > 0 ? 'F' : 'R') + (rel.x > 0 ? 'L' : 'R') };
+  });
+  const order = ['FL', 'FR', 'RL', 'RR'];
+  if (new Set(rigs.map((r) => r.key)).size !== 4) return { error: 'could not tell the four wheels apart: ' + rigs.map((r) => r.key).join(',') };
+  rigs.sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key));
+  const wheelIndex = new Map(rigs.map((r, i) => [r.w, i]));
+
+  // Stage 1: build everything, touching nothing in the scene.
+  const report = [];
+  const pieces = [];   // { wheel: index, mesh }
+  const replace = [];  // { src, rest: Uint32Array }
+  for (const m of cand) {
+    const g = m.geometry;
+    const M = toFrame(m);
+    const count = g.getAttribute('position').count;
+    let idx = g.index ? g.index.array : null;
+    if (!idx) { idx = new Uint32Array(count); for (let i = 0; i < count; i++) idx[i] = i; }
+    const res = splitByWheel(framePoints(g, M), idx, loc.wheels);
+    if (m === tyreMesh && res.perWheel.some((a) => !a)) return { error: 'a wheel received no tyre triangles' };
+
+    const per = [];
+    loc.wheels.forEach((w, k) => {
+      const tris = res.perWheel[k];
+      if (!tris) return;
+      const r = rigs[wheelIndex.get(w)];
+      const part = new THREE.Mesh(subsetGeometry(g, tris), m.material);
+      part.name = `${m.name}_${r.key}`;
+      part.userData = { ...m.userData, wheel: r.key };
+      part.castShadow = m.castShadow;
+      part.receiveShadow = m.receiveShadow;
+      part.renderOrder = m.renderOrder;
+      part.visible = m.visible;
+      part.layers.mask = m.layers.mask;
+      part.frustumCulled = false;                       // the piece turns about the axle; it is always near the car
+      part.matrixAutoUpdate = false;
+      part.matrix.makeTranslation(-r.center.x, -r.center.y, -r.center.z).multiply(M);
+      part.matrixWorldNeedsUpdate = true;
+      pieces.push({ wheel: rigs.indexOf(r), mesh: part });
+      per.push(`${r.key}:${tris.length / 3}`);
+    });
+    const eccMax = Math.max(...res.stats.map((s) => Math.hypot(s.ecc[0], s.ecc[1])));
+    report.push(`${glbName(m)} -> ${per.join(' ')} tris` + (res.rest.length ? `, ${res.rest.length / 3} left static` : '') +
+      `, off-axle ${(eccMax * 1000).toFixed(1)} mm`);
+    if (res.rest.length) replace.push({ src: m, rest: res.rest });
+    else replace.push({ src: m, rest: null });
+  }
+
+  const spins = [], pivots = [];
+  for (const r of rigs) {
+    const pivot = new THREE.Group();
+    pivot.name = `wheel_${r.key}_pivot`;
+    pivot.position.copy(r.center);
+    const spin = new THREE.Group();
+    spin.name = `wheel_${r.key}`;
+    pivot.add(spin);
+    pivots.push(pivot);
+    spins.push(spin);
+  }
+  for (const p of pieces) spins[p.wheel].add(p.mesh);
+
+  const restGeos = replace.map((e) => (e.rest ? subsetGeometry(e.src.geometry, e.rest) : null));
+
+  // Stage 2: commit. Nothing below can fail halfway in a way that matters.
+  const orphans = [];
+  replace.forEach((e, i) => {
+    if (restGeos[i]) { orphans.push(e.src.geometry); e.src.geometry = restGeos[i]; }
+    else { orphans.push(e.src.geometry); e.src.removeFromParent(); }
+  });
+  pivots.forEach((p) => orient.add(p));
+
+  const f = (n) => Math.round(n * 1000) / 1000;
+  report.unshift(`${loc.wheels.length} wheels found, radius ${loc.radius.toFixed(3)} m; axle sources: ` +
+    rigs.map((r) => `${r.key} ${r.w.axisSource} (tilt ${r.w.tiltDeg.toFixed(2)} deg)`).join(', '));
+  return {
+    spins, axes: rigs.map((r) => r.axis), radius: loc.radius, orphans, report,
+    summary: {
+      radius: f(loc.radius),
+      wheels: rigs.map((r) => ({
+        key: r.key, center: r.center.toArray().map(f), axis: r.axis.toArray().map(f),
+        radius: f(r.w.radius), width: f(r.w.halfWidth * 2), axisSource: r.w.axisSource, tiltDeg: f(r.w.tiltDeg),
+      })),
+    },
+  };
 }
 
 /** Frees GPU resources of a loaded glTF scene (geometries, materials and every texture slot). */
