@@ -23,11 +23,81 @@
 </head>
 <body>
 
-  <!-- Loader -->
+  <!-- Loader. Presentation only: main.js still writes #loader-pct (text) and #loader-bar (scaleX) and adds .is-ready when done.
+       The labels, the eased number and the stage text below only READ that real progress (see the script at the end of this block). -->
   <div class="loader" id="loader" role="status" aria-live="polite">
-    <div class="loader__count"><span id="loader-pct">0</span><i>%</i></div>
-    <div class="loader__line"><span id="loader-bar"></span></div>
-    <p class="loader__note">Preparing the road</p>
+    <div class="loader__glow" aria-hidden="true"></div>
+
+    <svg class="loader__car" viewBox="0 0 1000 300" aria-hidden="true" focusable="false" preserveAspectRatio="xMidYMid meet">
+      <g fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke">
+        <path pathLength="1" class="draw" d="M70 214 L84 176 Q92 160 122 154 L262 136 Q330 80 440 70 L600 70 Q700 74 770 132 L890 150 Q932 158 940 188 L944 214"/>
+        <path pathLength="1" class="draw d2" d="M70 214 L140 214 M222 214 L736 214 M818 214 L944 214"/>
+        <path pathLength="1" class="draw d3" d="M262 136 L330 136 Q380 84 452 78 L452 136 Z M470 78 L596 78 Q668 82 722 136 L470 136 Z"/>
+        <path pathLength="1" class="draw d4" d="M122 154 L200 150 M770 132 L720 138 M890 150 L832 154"/>
+        <g class="wheel"><circle cx="181" cy="214" r="42"/><circle cx="181" cy="214" r="26"/><circle cx="181" cy="214" r="5"/></g>
+        <g class="wheel"><circle cx="777" cy="214" r="42"/><circle cx="777" cy="214" r="26"/><circle cx="777" cy="214" r="5"/></g>
+      </g>
+    </svg>
+
+    <svg class="loader__ring" viewBox="-100 -100 200 200" aria-hidden="true" focusable="false">
+      <g fill="none" stroke="currentColor" vector-effect="non-scaling-stroke">
+        <circle r="96" stroke-width=".6" opacity=".5"/>
+        <circle r="82" stroke-width=".6" stroke-dasharray="1 5" opacity=".7"/>
+        <circle class="ring-arc" r="90" stroke-width="1.2" stroke-dasharray="90 476" stroke-linecap="round"/>
+      </g>
+    </svg>
+
+    <header class="loader__top" aria-hidden="true">
+      <span>M5 COMPETITION</span>
+      <span>SCENE 01 <i></i> 07</span>
+    </header>
+
+    <div class="loader__center">
+      <p class="loader__brand" aria-label="Aether GT">AETHER<span>GT</span></p>
+      <div class="loader__count" aria-hidden="true"><span id="loader-pct-view">0</span><i>%</i></div>
+      <!-- Written by main.js; kept in the page for it and for assistive tech, hidden visually. -->
+      <span class="loader__sr"><span id="loader-pct">0</span>%</span>
+      <div class="loader__line"><span id="loader-bar"></span></div>
+    </div>
+
+    <ol class="loader__steps" id="loader-steps">
+      <li data-step="0">Initializing experience</li>
+      <li data-step="1">Loading vehicle model</li>
+      <li data-step="2">Preparing environment</li>
+      <li data-step="3">Ready to drive</li>
+    </ol>
+
+    <script>
+      /* Presentation only. Reads the real progress main.js writes to #loader-pct; never sets, resets or invents progress.
+         The shown number eases toward the real value (it can never exceed it); the active step follows the real value. */
+      (function () {
+        var src = document.getElementById('loader-pct'), view = document.getElementById('loader-pct-view');
+        var steps = document.querySelectorAll('#loader-steps li'), loader = document.getElementById('loader');
+        if (!src || !view || !loader) return;
+        var reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+        var real = 0, shown = 0, active = -1, raf = 0;
+        function stepFor(p) { return p >= 100 ? 3 : p >= 90 ? 2 : p >= 12 ? 1 : 0; }
+        function paint() {
+          var v = Math.round(shown);
+          view.textContent = v < 10 ? '0' + v : v;
+          var s = stepFor(real >= 100 && shown < 99.5 ? 99 : Math.floor(shown));
+          if (s !== active) { active = s; steps.forEach(function (li, i) { li.className = i === s ? 'is-on' : i < s ? 'is-done' : ''; }); loader.dataset.step = s; }
+        }
+        function tick() {
+          raf = 0;
+          shown += (real - shown) * 0.18; if (real - shown < 0.15) shown = real;
+          paint();
+          if (shown < real) raf = requestAnimationFrame(tick);
+        }
+        function read() {
+          var n = parseInt(src.textContent, 10); if (isNaN(n)) return;
+          real = Math.max(real, Math.min(100, n));   // never goes backwards
+          if (reduce) { shown = real; paint(); } else if (!raf) raf = requestAnimationFrame(tick);
+        }
+        new MutationObserver(read).observe(src, { childList: true, characterData: true, subtree: true });
+        read(); paint();
+      })();
+    </script>
   </div>
 
   <!-- Fixed stage: WebGL canvas mounts here (Phase 2) -->
