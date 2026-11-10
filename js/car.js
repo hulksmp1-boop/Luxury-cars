@@ -409,6 +409,7 @@ export function initCar(stage, opts = {}) {
 //  - Only two materials author an emission: "reartail" (red) and "material_95" (amber, front).
 
 const GLB_URL = 'assets/models/bmw_m5_f90.glb';
+const DRACO_DECODER_PATH = 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/libs/draco/gltf/';
 const GLB_TIMEOUT_MS = 90000;               // ~40 MB: generous, a slow connection must not trip the fallback
 const GLB_YAW = -Math.PI / 2;               // +X (model front) -> +Z (Aether GT front)
 
@@ -432,15 +433,27 @@ const nameEnds = (o, list) => list.some((n) => n && o.name.endsWith(n));
  */
 export async function loadCarFromGLB(url = GLB_URL, opts = {}) {
   // Loaded on demand so a blocked CDN for the add-ons cannot take the procedural fallback down with it.
-  const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
+  const [{ GLTFLoader }, { DRACOLoader }] = await Promise.all([
+    import('three/addons/loaders/GLTFLoader.js'),
+    import('three/addons/loaders/DRACOLoader.js'),
+  ]);
+  // Both file variants work: the plain one never touches the decoder; the Draco + WebP one (KHR_draco_mesh_compression,
+  // EXT_texture_webp) needs it. The decoder files come from the same pinned three.js version as the importmap.
+  const draco = new DRACOLoader().setDecoderPath(DRACO_DECODER_PATH);
+  const loader = new GLTFLoader().setDRACOLoader(draco);
 
-  const gltf = await withTimeoutMs(new Promise((resolve, reject) => {
-    new GLTFLoader().load(
-      url, resolve,
-      (e) => { if (e.lengthComputable && e.total) opts.onProgress?.(e.loaded / e.total); },
-      reject,
-    );
-  }), GLB_TIMEOUT_MS, 'GLB load timeout');
+  let gltf;
+  try {
+    gltf = await withTimeoutMs(new Promise((resolve, reject) => {
+      loader.load(
+        url, resolve,
+        (e) => { if (e.lengthComputable && e.total) opts.onProgress?.(e.loaded / e.total); },
+        reject,
+      );
+    }), GLB_TIMEOUT_MS, 'GLB load timeout');
+  } finally {
+    draco.dispose();
+  }
   if (opts.signal?.cancelled) { disposeObject(gltf.scene); throw new Error('GLB load cancelled'); }
 
   const low = opts.quality === 'low';
@@ -590,12 +603,29 @@ export async function initCarFromGLB(stage, opts = {}) {
       stage.scene.add(car.root);
       try { stage.renderer?.compile(stage.scene, stage.camera); } catch { /* non-fatal */ }
       stage.requestRender?.();
+      reportCarSource('glb');
       return car;
     } catch (err) {
       console.warn('[aether] GLB car failed, using the procedural car.', err);
+      reportCarSource('procedural', err);
     }
   }
+  if (forced) reportCarSource('procedural', new Error('forced by ?car=procedural'));
   return opts.signal?.cancelled ? null : initCar(stage, opts);
+}
+
+/** Records which car is on screen: <html data-car="glb|procedural">. With ?debug the reason is also printed on the page
+ *  (phones have no easy console). */
+function reportCarSource(kind, err) {
+  document.documentElement.dataset.car = kind;
+  if (err) window.__aetherCarError = String(err && err.message || err);
+  if (kind === 'procedural' && new URLSearchParams(location.search).has('debug')) {
+    const d = document.createElement('div');
+    d.textContent = 'GLB failed: ' + (err && err.message || err);
+    d.style.cssText = 'position:fixed;left:8px;right:8px;top:48px;z-index:99;padding:8px 10px;font:12px/1.35 monospace;' +
+      'color:#fff;background:rgba(160,20,20,.85);border-radius:6px;pointer-events:none;word-break:break-word';
+    document.body.appendChild(d);
+  }
 }
 
 function withTimeoutMs(promise, ms, message) {
