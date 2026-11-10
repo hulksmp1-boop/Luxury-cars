@@ -23,8 +23,10 @@ function hasWebGL() {
  */
 const pct = $('loader-pct');
 const bar = $('loader-bar');
+let shownProgress = 0;
 export function setProgress(p) {
-  const v = Math.max(0, Math.min(1, p));
+  const v = Math.max(shownProgress, Math.min(1, p)); // never goes backwards: the timer and the real GLB download both report here
+  shownProgress = v;
   pct.textContent = Math.round(v * 100);
   bar.style.transform = `scaleX(${v})`;
 }
@@ -34,7 +36,7 @@ function simulateLoad(ms = 1600) {
     const t0 = performance.now();
     const tick = (now) => {
       const p = Math.min(1, (now - t0) / ms);
-      setProgress(1 - Math.pow(1 - p, 3));
+      setProgress(0.9 * (1 - Math.pow(1 - p, 3))); // the last 10% is real: set when the scene is built
       p < 1 ? requestAnimationFrame(tick) : resolve();
     };
     requestAnimationFrame(tick);
@@ -86,12 +88,17 @@ async function initStage() {
   return stage;
 }
 
-/** Builds the car and adds it to the stage. A failure here keeps the empty stage instead of the fallback. */
+/** Loads the real car (GLB) and adds it to the stage; car.js falls back to the procedural car if that fails.
+ *  A failure here keeps the empty stage instead of the fallback. */
 async function initCar(bounds) {
   try {
     const mod = await withTimeout(import('./car.js'), 10000);
     if (stageAborted || !stage) return;
-    car = mod.initCar(stage, { bounds });
+    car = await mod.initCarFromGLB(stage, {
+      bounds,
+      onProgress: (f) => setProgress(0.9 * f),
+      signal: { get cancelled() { return stageAborted; } },
+    });
   } catch (err) {
     console.warn('[aether] Car failed to load, continuing without it.', err);
     car = null;
@@ -151,6 +158,7 @@ async function boot() {
 
   // Minimum loader time and scene setup run together.
   await Promise.all([simulateLoad(env.reducedMotion ? 200 : 1600), initStage()]);
+  setProgress(1);
 
   await initUIOverlay();
 

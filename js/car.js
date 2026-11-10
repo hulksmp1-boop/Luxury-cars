@@ -15,7 +15,8 @@
 //
 // createProceduralCar(opts)      -> placeholder (this file)
 // initCar(stage, opts)           -> places any car that follows the contract into the scene
-// loadCarFromGLB(url, mapping)   -> real model (later); `mapping` names its wheel/light nodes
+// loadCarFromGLB(url, opts)      -> real model (async). Same contract; falls back to nothing by itself (see below)
+// initCarFromGLB(stage, opts)    -> async initCar(): tries the GLB, falls back to the procedural car on any failure
 //
 // This module imports only three. It never imports scene.js: it receives the stage
 // object (scene, renderer, camera, quality...) from the boot code.
@@ -395,11 +396,238 @@ export function initCar(stage, opts = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// Real model: BMW M5 F90 (GLB)
+// ---------------------------------------------------------------------------
+//
+// Facts about assets/models/bmw_m5_f90.glb, read from the file (not assumed):
+//  - 1 unit = 1 metre (body 4.95 m long). Y is up. The car FACES +X, so its width runs along Z.
+//  - The scene root carries baked matrices; the net world transform is already Y-up, so only a yaw is needed.
+//  - There are NO wheel nodes. The four wheels are merged, per material, into shared meshes (tyre, rim, disc,
+//    caliper...), so a wheel cannot be spun without splitting that geometry. `wheels` is therefore empty for now.
+//  - One 18-vertex mesh ("gauge_emissive") is a degenerate line stretching 9 m behind the car; it has no area and
+//    draws nothing, but it must not count towards the bounding box.
+//  - Only two materials author an emission: "reartail" (red) and "material_95" (amber, front).
+
+const GLB_URL = 'assets/models/bmw_m5_f90.glb';
+const GLB_TIMEOUT_MS = 90000;               // ~40 MB: generous, a slow connection must not trip the fallback
+const GLB_YAW = -Math.PI / 2;               // +X (model front) -> +Z (Aether GT front)
+
+// Mesh names that exist in the file (suffix match; Three.js keeps the glTF node names).
+const GLB_NAMES = {
+  tyre: 'EXT_Tyre_0',                       // all four tyres in one mesh: gives wheel radius and axle positions
+  ignoreBounds: ['gauge_emissive_001_0'],   // degenerate line, see above
+  tail: ['reartail_0'],                     // authored red emissive
+  head: ['LightEmissiveA_Material_0', '6738_1111_0'],  // front light meshes (listed for the contract, not driven yet)
+  castShadow: ['Carpaint_0', 'EXT_BODY_2_0', 'EXT_CARBON_0', 'EXT_Tyre_0', 'EXt_GLASS_0'],
+};
+
+const nameEnds = (o, list) => list.some((n) => n && o.name.endsWith(n));
+
+/**
+ * Loads the real car and returns an object that follows the CAR CONTRACT. Nothing is added to a scene.
+ * Rejects on any failure (network, parse, timeout, unexpected content): the caller falls back (see initCarFromGLB).
+ * @param {string} [url]
+ * @param {{ quality?: string, shadows?: boolean, renderer?: THREE.WebGLRenderer,
+ *           onProgress?: (fraction: number) => void, signal?: { cancelled: boolean } }} [opts]
+ */
+export async function loadCarFromGLB(url = GLB_URL, opts = {}) {
+  // Loaded on demand so a blocked CDN for the add-ons cannot take the procedural fallback down with it.
+  const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
+
+  const gltf = await withTimeoutMs(new Promise((resolve, reject) => {
+    new GLTFLoader().load(
+      url, resolve,
+      (e) => { if (e.lengthComputable && e.total) opts.onProgress?.(e.loaded / e.total); },
+      reject,
+    );
+  }), GLB_TIMEOUT_MS, 'GLB load timeout');
+  if (opts.signal?.cancelled) { disposeObject(gltf.scene); throw new Error('GLB load cancelled'); }
+
+  const low = opts.quality === 'low';
+  const castShadows = opts.shadows !== false && !low;
+  const maxAniso = Math.min(8, opts.renderer?.capabilities?.getMaxAnisotropy?.() ?? 1);
+
+  // ---- Hierarchy: root (contract pivot) > orient (yaw) > gltf.scene (untouched) ----
+  const root = new THREE.Group();
+  root.name = 'AetherGT_Car';
+  const orient = new THREE.Group();
+  orient.name = 'glb_orient';
+  orient.rotation.y = GLB_YAW;
+  orient.add(gltf.scene);
+  root.add(orient);
+
+  // ---- Inventory: pass over the meshes once, without touching geometry, textures or material parameters ----
+  const meshes = [];
+  gltf.scene.traverse((o) => { if (o.isMesh) meshes.push(o); });
+  if (!meshes.length) throw new Error('GLB has no meshes');
+
+  const byEnd = (list) => meshes.filter((m) => nameEnds(m, list));
+  byEnd(GLB_NAMES.ignoreBounds).forEach((m) => { m.userData.noBounds = true; m.frustumCulled = false; });
+
+  const seen = new Set();
+  for (const m of meshes) {
+    m.castShadow = castShadows && nameEnds(m, GLB_NAMES.castShadow);
+    m.receiveShadow = false;
+    const list = Array.isArray(m.material) ? m.material : [m.material];
+    for (const mat of list) {
+      if (!mat || seen.has(mat)) continue;
+      seen.add(mat);
+      for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap', 'alphaMap',
+        'clearcoatMap', 'clearcoatNormalMap', 'clearcoatRoughnessMap']) {
+        if (mat[k]) mat[k].anisotropy = Math.max(mat[k].anisotropy || 1, maxAniso); // sharper at grazing angles; never lowers resolution
+      }
+    }
+  }
+
+  const measure = (filter) => {
+    const box = new THREE.Box3();
+    root.updateMatrixWorld(true);
+    for (const m of meshes) if (!m.userData.noBounds && (!filter || filter(m))) box.expandByObject(m);
+    return box;
+  };
+
+  // ---- Fit: centre on the axle mid-point (x/z of the origin) and rest the tyres on y = 0, no scaling here ----
+  const all = measure();
+  if (all.isEmpty()) throw new Error('GLB bounding box is empty');
+  const tyres = measure((m) => m.name.endsWith(GLB_NAMES.tyre));
+  const haveTyres = !tyres.isEmpty();
+
+  // Tyre mesh = four tyres: radius from its height; axle lines from its extent along the length (z after the yaw).
+  const R = haveTyres ? (tyres.max.y - tyres.min.y) / 2 : WHEEL_RADIUS;
+  const axleFront = haveTyres ? tyres.max.z - R : all.max.z - 0.9;
+  const axleRear = haveTyres ? tyres.min.z + R : all.min.z + 0.9;
+  const track = haveTyres ? (tyres.max.x - tyres.min.x) / 2 : WHEEL_X;   // outer face to outer face / 2 (half-width incl. tyre)
+  const centreX = (all.min.x + all.max.x) / 2;
+  const centreZ = (axleFront + axleRear) / 2;
+  const floor = haveTyres ? tyres.min.y : all.min.y;
+  orient.position.set(-centreX, -floor, -centreZ);
+
+  const size = measure().getSize(new THREE.Vector3());
+  if (!(size.x > 1 && size.x < 4 && size.y > 0.8 && size.y < 2.5 && size.z > 3 && size.z < 7)) {
+    throw new Error(`GLB size ${size.x.toFixed(2)} x ${size.y.toFixed(2)} x ${size.z.toFixed(2)} m is not a car in metres`);
+  }
+
+  // ---- Contact shadow: the procedural car ships one; without it the real car would float on the reflective floor ----
+  const blobTex = makeBlobTexture();
+  const blobMat = new THREE.MeshBasicMaterial({ map: blobTex, transparent: true, opacity: 0.8, depthWrite: false, fog: false });
+  const blobGeo = new THREE.PlaneGeometry(1, 1);
+  const blob = new THREE.Mesh(blobGeo, blobMat);
+  blob.name = 'contact_shadow';
+  blob.rotation.x = -Math.PI / 2;
+  blob.scale.set(size.x * 1.5, size.z * 1.25, 1);
+  blob.position.y = 0.004;
+  blob.renderOrder = 1;
+  blob.userData.noBounds = true;
+  root.add(blob);
+
+  // ---- Lights: only what the file authors. Tail = the red emissive material; head meshes are listed, not driven ----
+  const head = byEnd(GLB_NAMES.head);
+  const tail = byEnd(GLB_NAMES.tail);
+  const tailMats = [...new Set(tail.flatMap((m) => (Array.isArray(m.material) ? m.material : [m.material])))];
+  const lv = { head: 0, tail: 0 };
+  let shownTail = -1;
+  function setLightProgress(p, reduced = false) {
+    lightLevels(p, reduced, lv);
+    if (lv.tail !== shownTail) {
+      shownTail = lv.tail;
+      const k = TAIL_EMISSIVE.off + (TAIL_EMISSIVE.on - TAIL_EMISSIVE.off) * shownTail;
+      for (const mat of tailMats) mat.emissiveIntensity = k;
+    }
+  }
+  function setLightsDegraded() { /* no spotlights or glow sprites on the GLB car yet */ }
+
+  // ---- Contract ----
+  const halfL = size.z / 2;
+  const anchors = {
+    front: new THREE.Vector3(0, 0.5, halfL),
+    rear: new THREE.Vector3(0, 0.6, -halfL),
+    side: new THREE.Vector3(size.x / 2, 0.55, 0),
+    wheel: new THREE.Vector3(track - 0.15, R, axleFront),   // outer tyre face, front axle (left side, +X)
+    headlight: new THREE.Vector3(0.6, 0.6, halfL - 0.15),
+  };
+
+  function update() { /* wheels are merged into shared meshes: nothing to spin yet */ }
+
+  function dispose() {
+    root.removeFromParent();
+    disposeObject(gltf.scene);
+    blobGeo.dispose(); blobMat.dispose(); blobTex.dispose();
+  }
+
+  setLightProgress(0);
+  return {
+    root, wheels: [], wheelRadius: R, anchors,
+    lights: { head, tail },
+    parts: { model: gltf.scene },
+    source: 'glb',
+    // Exposed for the report and for ?debug; read-only facts about the model as loaded.
+    info: { size: size.toArray(), wheelRadius: R, axleFront, axleRear, track, meshes: meshes.length },
+    update, setLightProgress, setLightsDegraded, dispose,
+  };
+}
+
+/**
+ * Async counterpart of initCar(): GLB first, procedural car if anything goes wrong.
+ * `?car=procedural` in the URL skips the GLB (handy to test the fallback).
+ * @param {object} stage  see initCar
+ * @param {{ bounds?: object, quality?: string, url?: string, onProgress?: (f: number) => void,
+ *           signal?: { cancelled: boolean } }} [opts]
+ */
+export async function initCarFromGLB(stage, opts = {}) {
+  const forced = new URLSearchParams(location.search).get('car') === 'procedural';
+  if (!forced) {
+    try {
+      const car = await loadCarFromGLB(opts.url || GLB_URL, {
+        quality: opts.quality || stage.quality,
+        shadows: stage.shadowsEnabled,
+        renderer: stage.renderer,
+        onProgress: opts.onProgress,
+        signal: opts.signal,
+      });
+      if (opts.signal?.cancelled) { car.dispose(); return null; }
+      const k = fitToBounds(car.root, opts.bounds);
+      car.wheelRadius *= k;                      // wheelRadius is in world metres: follow the uniform fit scale
+      stage.scene.add(car.root);
+      try { stage.renderer?.compile(stage.scene, stage.camera); } catch { /* non-fatal */ }
+      stage.requestRender?.();
+      return car;
+    } catch (err) {
+      console.warn('[aether] GLB car failed, using the procedural car.', err);
+    }
+  }
+  return opts.signal?.cancelled ? null : initCar(stage, opts);
+}
+
+function withTimeoutMs(promise, ms, message) {
+  let t;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => { t = setTimeout(() => reject(new Error(message)), ms); }),
+  ]).finally(() => clearTimeout(t));
+}
+
+/** Frees GPU resources of a loaded glTF scene (geometries, materials and every texture slot). */
+function disposeObject(obj) {
+  const done = new Set();
+  obj.traverse((o) => {
+    o.geometry?.dispose();
+    const list = Array.isArray(o.material) ? o.material : o.material ? [o.material] : [];
+    for (const mat of list) {
+      if (done.has(mat)) continue;
+      done.add(mat);
+      for (const v of Object.values(mat)) if (v && v.isTexture) v.dispose();
+      mat.dispose();
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 /** Rests the model on y = 0 and shrinks it if it exceeds the allowed box. Origin stays between the axles. */
 function fitToBounds(root, bounds) {
+  let applied = 1;
   const measure = () => {
     const box = new THREE.Box3();
     root.updateMatrixWorld(true);
@@ -409,13 +637,14 @@ function fitToBounds(root, bounds) {
     return box;
   };
   let box = measure();
-  if (box.isEmpty()) return;
+  if (box.isEmpty()) return 1;
   if (bounds) {
     const size = box.getSize(new THREE.Vector3());
     const k = Math.min(1, bounds.width * 1.05 / size.x, bounds.height * 1.05 / size.y, bounds.length * 1.05 / size.z);
-    if (k < 1) { root.scale.multiplyScalar(k); box = measure(); }
+    if (k < 1) { root.scale.multiplyScalar(k); box = measure(); applied = k; }
   }
   root.position.y -= box.min.y;
+  return applied; // uniform scale applied (1 = none)
 }
 
 const cr = (p0, p1, p2, p3, t) =>
