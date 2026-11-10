@@ -199,17 +199,66 @@ h1, h2, p { margin: 0; }
 }
 
 /* ============ Loader ============ */
+/* Presentation only. main.js drives #loader-pct / #loader-bar and the .is-ready class; the loader leaves only then. */
 .loader {
-  position: fixed; inset: 0; z-index: 100; background: var(--black);
-  display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 1.75rem;
-  transition: opacity .9s var(--ease), visibility .9s;
+  position: fixed; inset: 0; z-index: 100; overflow: hidden; color: var(--silver);
+  background:
+    radial-gradient(70% 55% at 50% 58%, rgba(47,123,255,.13), transparent 70%),
+    radial-gradient(120% 80% at 50% 0%, #15171c 0%, var(--black) 60%),
+    var(--black);
+  display: grid; grid-template-rows: auto 1fr auto; justify-items: center;
+  padding: calc(var(--pad) * .7 + var(--safe-t)) var(--pad) calc(var(--pad) * .7 + var(--safe-b));
+  transition: opacity 1s var(--ease) .55s, visibility 1s linear .55s;   /* short hold so READY TO DRIVE is seen */
 }
 .is-ready .loader { opacity: 0; visibility: hidden; }
-.loader__count { font: 500 clamp(3rem, 14vw, 7rem)/1 var(--font-display); letter-spacing: -.04em; }
-.loader__count i { font-style: normal; font-size: .35em; color: var(--silver); margin-left: .15em; }
-.loader__line { width: min(60vw, 18rem); height: 1px; background: rgba(255,255,255,.12); }
-.loader__line span { display: block; height: 100%; background: var(--blue); box-shadow: 0 0 14px var(--blue); transform: scaleX(0); transform-origin: left; }
-.loader__note { font: 400 .75rem/1 var(--font-mono); letter-spacing: .14em; color: var(--silver); }
+.loader > * { position: relative; z-index: 1; }
+
+.loader__glow { position: absolute !important; inset: auto 0 -20% 0; height: 60%; z-index: 0 !important;
+  background: radial-gradient(50% 60% at 50% 100%, rgba(47,123,255,.18), transparent 70%); animation: loader-breathe 6s ease-in-out infinite; }
+
+.loader__car { position: absolute !important; z-index: 0 !important; left: 50%; top: 58%; width: min(150vw, 74rem); transform: translate(-50%, -50%);
+  color: rgba(184,188,196,.2); opacity: .9; }
+.loader__car .draw { stroke-dasharray: 1; stroke-dashoffset: 1; animation: loader-draw 2.6s var(--ease) forwards; }
+.loader__car .d2 { animation-delay: .25s; } .loader__car .d3 { animation-delay: .5s; } .loader__car .d4 { animation-delay: .7s; }
+.loader__car .wheel { opacity: 0; animation: loader-fade 1.4s ease 1.2s forwards; }
+
+.loader__ring { position: absolute !important; z-index: 0 !important; left: 50%; top: 46%; width: min(86vw, 34rem); aspect-ratio: 1; transform: translate(-50%, -50%);
+  color: rgba(47,123,255,.4); }
+.loader__ring .ring-arc { color: var(--blue); transform-origin: 0 0; animation: loader-spin 14s linear infinite; filter: drop-shadow(0 0 4px rgba(47,123,255,.7)); }
+
+.loader__top { width: 100%; max-width: 96rem; display: flex; justify-content: space-between; align-items: center;
+  font: 400 .68rem/1 var(--font-mono); letter-spacing: .26em; opacity: 0; animation: loader-fade 1.2s ease .2s forwards; }
+.loader__top i { display: inline-block; width: 1.6rem; height: 1px; background: currentColor; opacity: .5; vertical-align: middle; margin: 0 .3rem; }
+
+.loader__center { align-self: center; display: flex; flex-direction: column; align-items: center; gap: clamp(1rem, 3.2svh, 1.75rem); text-align: center; }
+.loader__brand { font: 500 clamp(2.6rem, 11vw, 7rem)/.95 var(--font-display); letter-spacing: .14em; color: var(--white); margin-right: -.14em;
+  opacity: 0; transform: translateY(.6rem); animation: loader-rise 1.4s var(--ease) .3s forwards; }
+.loader__brand span { display: block; font-size: .42em; letter-spacing: .6em; margin: .7em -.6em 0 0; color: var(--blue); }
+.loader__count { font: 400 clamp(3.4rem, 12vw, 6.5rem)/1 var(--font-display); letter-spacing: -.02em; color: var(--white); font-variant-numeric: tabular-nums; min-width: 2.2ch; text-align: center; }
+.loader__count i { font-style: normal; font-size: .3em; color: var(--silver); margin-left: .2em; vertical-align: top; position: relative; top: .35em; }
+.loader__sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.loader__line { width: min(78vw, 26rem); height: 1px; background: rgba(255,255,255,.12); }
+.loader__line span { display: block; height: 100%; background: linear-gradient(90deg, rgba(47,123,255,.5), var(--blue) 70%, #a9c8ff);
+  box-shadow: 0 0 12px rgba(47,123,255,.9), 0 0 28px rgba(47,123,255,.45); transform: scaleX(0); transform-origin: left; will-change: transform; }
+
+.loader__steps { list-style: none; display: flex; gap: clamp(.9rem, 3vw, 2.2rem); flex-wrap: wrap; justify-content: center; max-width: 60rem;
+  font: 400 .62rem/1.3 var(--font-mono); letter-spacing: .2em; text-transform: uppercase; }
+.loader__steps li { color: rgba(184,188,196,.32); transition: color .6s ease; }
+.loader__steps li.is-done { color: rgba(184,188,196,.55); }
+.loader__steps li.is-on { color: var(--white); }
+.loader__steps li.is-on::before { content: ""; display: inline-block; width: .4rem; height: .4rem; border-radius: 50%; background: var(--blue); box-shadow: 0 0 8px var(--blue); margin-right: .6em; vertical-align: .05em; }
+
+@keyframes loader-draw { to { stroke-dashoffset: 0; } }
+@keyframes loader-fade { to { opacity: 1; } }
+@keyframes loader-rise { to { opacity: 1; transform: none; } }
+@keyframes loader-spin { to { transform: rotate(360deg); } }
+@keyframes loader-breathe { 0%, 100% { opacity: .7; } 50% { opacity: 1; } }
+
+@media (max-width: 640px) {
+  .loader__steps { flex-direction: column; align-items: center; gap: .55rem; }
+  .loader__steps li:not(.is-on) { display: none; }   /* phones: only the current step, no clutter */
+  .loader__car { top: 64%; width: 128vw; }
+}
 
 /* ============ Responsive ============ */
 /* Tablet: slightly larger headline share, a little less side padding feel. */
@@ -261,7 +310,10 @@ h1, h2, p { margin: 0; }
 @media (prefers-reduced-motion: reduce) {
   .scroll-cue i { animation: none; transform: none; }
   /* Overlays never animate, so they stay as they are: the grain is a static texture, not motion. Nothing to switch off. */
-  .loader { transition-duration: .01s; }
+  .loader { transition-duration: .01s; transition-delay: 0s; }
+  .loader *, .loader::before { animation: none !important; }
+  .loader__car .draw { stroke-dashoffset: 0; }
+  .loader__car .wheel, .loader__top, .loader__brand { opacity: 1; transform: none; }
   .ui-ready .reveal,
   .ui-ready .scene.is-after .reveal,
   .ui-ready .scene.is-active .reveal { transform: none; transition: opacity .35s linear; }
