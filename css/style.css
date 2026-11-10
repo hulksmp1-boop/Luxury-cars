@@ -1,0 +1,270 @@
+/* ============ Tokens ============ */
+:root {
+  --black: #050506;
+  --charcoal: #121316;
+  --white: #f5f6f8;
+  --silver: #b8bcc4;
+  --blue: #2f7bff;
+
+  --font-display: "Syne", system-ui, sans-serif;
+  --font-body: "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --pad: clamp(1.25rem, 5vw, 4rem);
+  --gutter: max(var(--pad), calc((100vw - 96rem) / 2)); /* keeps layout from stretching on wide screens */
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --ease: cubic-bezier(.22, .8, .2, 1);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { background: var(--black); color-scheme: dark; -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--black);
+  color: var(--white);
+  font-family: var(--font-body);
+  font-weight: 300;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+}
+html.is-loading, html.is-loading body { overflow: hidden; }
+h1, h2, p { margin: 0; }
+
+:focus-visible { outline: 1px solid var(--blue); outline-offset: 4px; }
+
+/* ============ Stage (WebGL mounts here) ============ */
+.stage {
+  position: fixed; inset: 0; z-index: 0;
+  background:
+    radial-gradient(120% 70% at 50% 108%, rgba(47,123,255,.14), transparent 60%),
+    linear-gradient(180deg, var(--black) 0%, var(--charcoal) 100%);
+}
+.stage canvas { display: block; width: 100%; height: 100%; }
+/* Without WebGL: a calm CSS horizon with a blue glow keeps the page cinematic. */
+.no-webgl .stage {
+  background:
+    radial-gradient(70% 34% at 50% 62%, rgba(47,123,255,.2), transparent 70%),
+    linear-gradient(180deg, var(--black) 0%, var(--charcoal) 62%, #0b0c0f 62%, var(--black) 100%);
+}
+.stage__fallback { position: absolute; inset: 0; background-size: cover; background-position: center; opacity: 0; }
+.no-webgl /* Without WebGL: a calm CSS horizon with a blue glow keeps the page cinematic. */
+.no-webgl .stage {
+  background:
+    radial-gradient(70% 34% at 50% 62%, rgba(47,123,255,.2), transparent 70%),
+    linear-gradient(180deg, var(--black) 0%, var(--charcoal) 62%, #0b0c0f 62%, var(--black) 100%);
+}
+.stage__fallback { opacity: 1; }
+.no-webgl .stage canvas { display: none; }
+
+/* ============ Cinematic overlays ============
+   Three static, fixed, click-through layers over the WebGL canvas. None of them animates or reads JS state, so they
+   cost one composited layer each and nothing per frame. Stack: canvas (0) < atmosphere (1) < story/copy (3)
+   < vignette (4) < grain (5) < progress + counter (10) < loader (100). Colours stay in the charcoal / silver /
+   electric-blue family; every alpha is kept low so road markings, lamps and reflections read through untouched. */
+.atmosphere, .vignette, .grain { position: fixed; inset: 0; pointer-events: none; }
+
+/* Atmospheric depth: a faint blue-grey cool wash from the top, a soft haze band where road meets distance, and a
+   whisper of electric blue pooling at the floor. Static on purpose: the same air in all seven scenes. */
+.atmosphere {
+  z-index: 1;
+  background:
+    radial-gradient(80% 16% at 50% 56%, rgba(120,142,178,.045), transparent 72%),
+    radial-gradient(120% 55% at 50% 108%, rgba(47,123,255,.03), transparent 65%),
+    linear-gradient(180deg, rgba(74,92,122,.06) 0%, rgba(74,92,122,.02) 34%, transparent 58%);
+}
+
+/* Vignette: clear centre, long smooth falloff, cold black (not pure black) at the edges. Peaks around 50% at the
+   corners, noticeably gentler than a hard frame, and the middle 55% of the screen is untouched. */
+.vignette {
+  z-index: 4;
+  background: radial-gradient(ellipse at 50% 48%,
+    transparent 0%, transparent 55%,
+    rgba(3,4,8,.10) 68%, rgba(3,4,8,.26) 82%, rgba(3,4,8,.46) 100%);
+}
+
+/* Film grain: one 180px fractal-noise tile (rasterised once by the browser), static, no blend mode, no animation.
+   The matrix turns the noise into white specks on a transparent base (alpha = 3 x (luma - .5)), computed in sRGB
+   rather than the filter default linearRGB. Result: grain only ever adds a little light, so it never dims lamps or
+   chrome, and lifts the #050506 black floor by about 1 level. Measured at roughly +-2 levels of texture. */
+.grain {
+  z-index: 5; opacity: .1;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n' color-interpolation-filters='sRGB' x='0' y='0' width='100%' height='100%'><feTurbulence type='fractalNoise' baseFrequency='1.1' numOctaves='1' seed='7' stitchTiles='stitch'/><feColorMatrix type='matrix' values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 1 1 1 0 -1.5'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+  background-size: 180px 180px;
+}
+
+/* ============ Progress + counter ============ */
+.progress {
+  position: fixed; z-index: 10; top: 0; left: 0; width: 100%; height: 1px;
+  background: rgba(255,255,255,.07); pointer-events: none;
+}
+.progress span {
+  display: block; height: 100%; width: 100%;
+  background: linear-gradient(90deg, rgba(47,123,255,.45), var(--blue) 65%, #a9c8ff);
+  transform: scaleX(0); transform-origin: left; will-change: transform;
+  box-shadow: 0 0 8px rgba(47,123,255,.55);
+}
+.counter {
+  position: fixed; z-index: 10; right: max(var(--gutter), env(safe-area-inset-right, 0px)); bottom: calc(var(--pad) * .6 + var(--safe-b));
+  display: flex; align-items: center; gap: .75rem; pointer-events: none;
+  font: 400 .75rem/1 var(--font-mono); letter-spacing: .12em; color: var(--silver);
+  font-variant-numeric: tabular-nums;
+}
+.counter i { width: 2.25rem; height: 1px; background: var(--silver); opacity: .5; }
+.counter span:last-child { opacity: .55; }
+
+/* ============ Story ============ */
+.story { position: relative; z-index: 3; overflow-x: clip; }
+.scene {
+  position: relative; min-height: 100vh; min-height: 100svh;
+  display: flex; flex-direction: column; justify-content: flex-end;
+  padding:
+    calc(var(--pad) + var(--safe-t))
+    max(var(--gutter), env(safe-area-inset-right, 0px))
+    calc(var(--pad) + var(--safe-b) + 3rem)
+    max(var(--gutter), env(safe-area-inset-left, 0px));
+}
+
+/* Scene label: "01 — Presence" */
+.scene__label {
+  font: 400 .72rem/1 var(--font-mono); letter-spacing: .22em; text-transform: uppercase;
+  color: var(--silver); margin-bottom: 1.25rem; text-shadow: 0 1px 14px rgba(0,0,0,.8);
+}
+.scene__num { color: var(--blue); }
+
+/* Hero */
+.scene--hero { justify-content: center; align-items: flex-start; }
+.hero-title {
+  font: 500 clamp(3.4rem, 21vw, 17rem)/.86 var(--font-display);
+  font: 500 clamp(3.4rem, min(21vw, 34svh), 17rem)/.86 var(--font-display);
+  letter-spacing: -.04em;
+}
+.hero-sub { margin-top: 1.75rem; max-width: 22ch; color: var(--silver); font-size: clamp(1rem, 2.4vw, 1.25rem); }
+.scroll-cue {
+  position: absolute; left: max(var(--gutter), env(safe-area-inset-left, 0px)); bottom: calc(var(--pad) + var(--safe-b));
+  display: flex; align-items: center; gap: 1rem;
+  font: 400 .75rem/1 var(--font-mono); letter-spacing: .14em; color: var(--silver);
+}
+.scroll-cue i { width: 1px; height: 3.5rem; background: linear-gradient(var(--blue), transparent); transform-origin: top; animation: cue 2.4s var(--ease) infinite; }
+@keyframes cue { 0% { transform: scaleY(0); } 55% { transform: scaleY(1); } 100% { transform: scaleY(1); opacity: 0; } }
+
+/* Editorial copy: headline + supporting line. The headline column stays under ~45% of the width so the car
+   (centred) keeps clear air; it wraps balanced rather than shrinking. */
+.copy { max-width: 100%; text-shadow: 0 1px 18px rgba(0,0,0,.75); }
+.copy--right { align-self: flex-end; text-align: right; }
+.copy__title {
+  font: 500 clamp(2.25rem, min(5.6vw, 12svh), 6.25rem)/.96 var(--font-display);
+  letter-spacing: -.035em; max-width: 7.2em; text-wrap: balance; overflow-wrap: break-word;
+  margin-bottom: 1.4rem;
+}
+.copy--right .copy__title, .copy--right .copy__text { margin-left: auto; }
+.copy__text { max-width: min(26rem, 40vw); font-size: clamp(1.05rem, 2.6vw, 1.3rem); line-height: 1.5; color: var(--silver); }
+
+/* Outlined ghost word */
+.ghost-word {
+  position: absolute; left: 0; right: 0; top: 14%; text-align: center;
+  font: 700 clamp(3.2rem, 17vw, 16rem)/1 var(--font-display); letter-spacing: -.04em;
+  color: transparent; -webkit-text-stroke: 1px rgba(184,188,196,.28);
+  white-space: nowrap; overflow: hidden; pointer-events: none; user-select: none;
+}
+
+/* Finale */
+.scene--finale { justify-content: center; align-items: center; text-align: center; }
+.finale-title { font: 500 clamp(2.4rem, 10vw, 8rem)/.98 var(--font-display); font: 500 clamp(2.4rem, min(10vw, 17svh), 8rem)/.98 var(--font-display); letter-spacing: -.035em; }
+.finale-sub { margin-top: 2rem; font: 400 .8rem/1 var(--font-mono); letter-spacing: .3em; color: var(--silver); }
+
+/* ============ Scene overlays (ui.js adds .ui-ready) ============
+   One scene is visible at a time. The story only provides scroll length (one viewport per scene, as before);
+   ui.js sets .is-active on the scene that owns the current timeline progress, .is-after on finished ones.
+   Without JS the sections above simply stack as normal content. */
+.ui-ready .story { height: calc(var(--scenes, 7) * 100vh); height: calc(var(--scenes, 7) * 100svh); }
+.ui-ready .scene {
+  position: fixed; inset: 0; min-height: 0; isolation: isolate; pointer-events: none;
+  visibility: hidden; transition: visibility 0s linear .6s;
+}
+.ui-ready .scene.is-active { visibility: visible; transition-delay: 0s; }
+
+/* Leaving is quick; arriving is slow and staggered by --i (set by ui.js). Opacity and transform only. */
+.ui-ready .reveal {
+  opacity: 0; transform: translate3d(0, 1.1rem, 0);
+  transition: opacity .45s ease, transform .55s ease;
+}
+.ui-ready .scene.is-after .reveal { transform: translate3d(0, -.7rem, 0); }
+.ui-ready .scene.is-active .reveal {
+  opacity: 1; transform: none;
+  transition:
+    opacity 1s var(--ease) calc(.2s + var(--i, 0) * .09s),
+    transform 1.1s var(--ease) calc(.2s + var(--i, 0) * .09s);
+}
+
+/* ============ Loader ============ */
+.loader {
+  position: fixed; inset: 0; z-index: 100; background: var(--black);
+  display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 1.75rem;
+  transition: opacity .9s var(--ease), visibility .9s;
+}
+.is-ready .loader { opacity: 0; visibility: hidden; }
+.loader__count { font: 500 clamp(3rem, 14vw, 7rem)/1 var(--font-display); letter-spacing: -.04em; }
+.loader__count i { font-style: normal; font-size: .35em; color: var(--silver); margin-left: .15em; }
+.loader__line { width: min(60vw, 18rem); height: 1px; background: rgba(255,255,255,.12); }
+.loader__line span { display: block; height: 100%; background: var(--blue); box-shadow: 0 0 14px var(--blue); transform: scaleX(0); transform-origin: left; }
+.loader__note { font: 400 .75rem/1 var(--font-mono); letter-spacing: .14em; color: var(--silver); }
+
+/* ============ Responsive ============ */
+/* Tablet: slightly larger headline share, a little less side padding feel. */
+@media (min-width: 641px) and (max-width: 1024px) {
+  .copy__title { font-size: clamp(2.4rem, 6vw, 4rem); max-width: 6.8em; }
+}
+/* Phones: counter moves to the top so it never covers copy. Copy sits in the bottom band on a soft scrim, so the
+   car (framed in the middle of the screen) stays clear and the text stays readable. */
+@media (max-width: 640px), (max-height: 480px) {
+  .counter { top: calc(var(--safe-t) + 1rem); bottom: auto; right: max(var(--pad), env(safe-area-inset-right, 0px)); }
+  .scene { padding-bottom: calc(var(--pad) + var(--safe-b)); }
+}
+@media (max-width: 640px) {
+  .copy__title { font-size: clamp(2.1rem, 10vw, 3rem); max-width: 100%; margin-bottom: 1rem; }
+  .copy__text { font-size: 1rem; max-width: min(24rem, 100%); }
+  .copy--right { align-self: stretch; }
+  .scene__label { margin-bottom: 1rem; }
+  .ui-ready .scene:has(.copy)::before {
+    content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+    background: linear-gradient(to top, rgba(5,5,6,.82) 0%, rgba(5,5,6,.55) 24%, transparent 46%);
+    opacity: 0; transition: opacity .45s ease;
+  }
+  .ui-ready .scene.is-active:has(.copy)::before { opacity: 1; transition-duration: 1s; }
+}
+/* Short landscape screens (phones on their side). */
+@media (max-height: 480px) and (orientation: landscape) {
+  .copy__title { font-size: clamp(1.75rem, min(5.6vw, 11svh), 3rem); margin-bottom: .6rem; }
+  .copy__text { font-size: 1rem; line-height: 1.4; }
+  .scene__label { margin-bottom: .6rem; }
+  .hero-sub { margin-top: .9rem; }
+  .ghost-word { top: 6%; }
+  .scroll-cue i { height: 2rem; }
+}
+/* Phones and tablets: gentler vignette (the car sits mid-screen and the copy sits at the bottom), subtler grain. */
+@media (max-width: 1024px) {
+  .vignette {
+    background: radial-gradient(ellipse at 50% 46%,
+      transparent 0%, transparent 58%,
+      rgba(3,4,8,.08) 72%, rgba(3,4,8,.20) 86%, rgba(3,4,8,.34) 100%);
+  }
+}
+@media (pointer: coarse) { .grain { opacity: .07; } }
+/* Weak devices (low tier, set by main.js, or after the frame-rate watchdog trips): keep the vignette, drop haze and grain. */
+[data-quality="low"] .grain,
+[data-quality="low"] .atmosphere { display: none; }
+
+/* ============ Reduced motion ============ */
+/* Text simply fades: no movement, no stagger. */
+@media (prefers-reduced-motion: reduce) {
+  .scroll-cue i { animation: none; transform: none; }
+  /* Overlays never animate, so they stay as they are: the grain is a static texture, not motion. Nothing to switch off. */
+  .loader { transition-duration: .01s; }
+  .ui-ready .reveal,
+  .ui-ready .scene.is-after .reveal,
+  .ui-ready .scene.is-active .reveal { transform: none; transition: opacity .35s linear; }
+  .ui-ready .scene { transition-duration: 0s; transition-delay: .35s; }
+  .ui-ready .scene.is-active { transition-delay: 0s; }
+}
