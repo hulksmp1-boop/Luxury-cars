@@ -1,611 +1,114 @@
 <!DOCTYPE html>
-<html lang="en" class="no-js">
+<html lang="en" class="is-loading no-js-ready">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
-  <meta name="theme-color" content="#08090b">
-
-  <!-- TODO: replace placeholder title/description once the brand name is decided -->
-  <title>Luxury Automotive — Cinematic Marketplace &amp; Digital Showcase</title>
-  <meta name="description" content="A cinematic, multi-brand luxury automotive showcase. Discover hypercars, supercars, grand tourers and the world's most prestigious manufacturers.">
-
-  <!-- Open Graph (image and URL to be added when assets and domain exist) -->
-  <meta property="og:type" content="website">
-  <meta property="og:title" content="Luxury Automotive — Cinematic Marketplace &amp; Digital Showcase">
-  <meta property="og:description" content="Explore luxury vehicles and prestigious manufacturers through cinematic, editorial storytelling.">
-  <meta property="og:locale" content="en_US">
-  <meta name="twitter:card" content="summary_large_image">
-
-  <!-- Fonts: Cormorant Garamond (display) + Inter (UI/body) -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Aether GT — A film in one scroll</title>
+  <meta name="description" content="A cinematic, scroll-driven 3D showcase of a single luxury sports car.">
+  <meta name="theme-color" content="#050506">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+      "gsap": "https://cdn.jsdelivr.net/npm/gsap@3.12.5/+esm",
+      "gsap/ScrollTrigger": "https://cdn.jsdelivr.net/npm/gsap@3.12.5/ScrollTrigger/+esm"
+    }
+  }
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;1,300;1,400&family=Inter:wght@300;400;500;600&display=swap">
-
-  <link rel="stylesheet" href="css/styles.css">
-
-  <!-- Lets the Three.js example modules (GLTFLoader etc.) resolve the bare "three" import. Keep in sync with js/scene.js. -->
-  <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.min.js"}}</script>
-
-  <!-- Flag JS availability before first paint -->
-  <script>document.documentElement.classList.replace('no-js', 'js');</script>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;700&family=Inter:wght@300;400;500&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <a class="skip-link" href="#main">Skip to main content</a>
 
-  <!-- ============ Navigation ============ -->
-  <header class="site-header" data-header>
-    <div class="container site-header__inner">
-      <!-- Wordmark placeholder: replace once the brand name is decided -->
-      <a class="wordmark" href="#home" aria-label="Wordmark placeholder, back to top">
-        <span class="wordmark__mark" aria-hidden="true"></span>
-        <span class="wordmark__text">Wordmark</span>
-      </a>
+  <!-- Loader -->
+  <div class="loader" id="loader" role="status" aria-live="polite">
+    <div class="loader__count"><span id="loader-pct">0</span><i>%</i></div>
+    <div class="loader__line"><span id="loader-bar"></span></div>
+    <p class="loader__note">Preparing the road</p>
+  </div>
 
-      <nav class="site-nav" id="site-nav" aria-label="Primary" data-nav>
-        <ul class="site-nav__list" role="list">
-          <li><a class="site-nav__link" href="#home">Home</a></li>
-          <li><a class="site-nav__link" href="#collection">Collection</a></li>
-          <li><a class="site-nav__link" href="#manufacturers">Manufacturers</a></li>
-          <li><a class="site-nav__link" href="#introduction">About</a></li>
-          <li><a class="site-nav__link" href="#contact">Contact</a></li>
-        </ul>
-        <a class="btn btn--ghost site-nav__cta" href="#collection">Explore Collection</a>
-      </nav>
+  <!-- Fixed stage: WebGL canvas mounts here (Phase 2) -->
+  <div class="stage" id="stage" aria-hidden="true">
+    <canvas id="gl"></canvas>
+    <!-- No-WebGL fallback backdrop (Phase 7 fills with image sequence) -->
+    <div class="stage__fallback" id="fallback"></div>
+  </div>
 
-      <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="site-nav" data-nav-toggle>
-        <span class="visually-hidden">Open menu</span>
-        <span class="nav-toggle__bars" aria-hidden="true"></span>
-      </button>
-    </div>
-  </header>
+  <!-- Cinematic overlays (CSS only, pointer-events: none). Bottom to top: atmosphere haze (z1, under the copy),
+       vignette (z4), film grain (z5). -->
+  <div class="atmosphere" aria-hidden="true"></div>
+  <div class="grain" aria-hidden="true"></div>
+  <div class="vignette" aria-hidden="true"></div>
 
-  <main id="main" tabindex="-1">
+  <!-- Scroll progress -->
+  <div class="progress" aria-hidden="true"><span id="progress-bar"></span></div>
+  <div class="counter" aria-hidden="true"><span id="counter-now">01</span><i></i><span id="counter-total">07</span></div>
 
-    <!-- ============ Cinematic Hero ============
-         Photography: place a licensed image at assets/images/hero.jpg (~2400×1350).
-         Until it exists, a CSS atmosphere fallback is shown automatically. -->
-    <section class="hero" id="home" aria-labelledby="hero-title">
-      <div class="hero__media" aria-hidden="true">
-        <img class="hero__image" src="assets/images/hero.jpg" alt="" width="2400" height="1350"
-             fetchpriority="high" decoding="async"
-             onerror="this.closest('.hero').classList.add('hero--fallback')">
-      </div>
+  <!-- Scroll story: seven scenes. Timing comes from js/scenes.js (data-scene is the 1-based index into SCENES);
+       ui.js fills the "NN — Label" text and shows one scene at a time. Without JS they stack as plain sections. -->
+  <main class="story" id="story">
 
-      <div class="container hero__inner">
-        <div class="hero__content">
-          <p class="eyebrow">The Collection</p>
-          <h1 class="hero__title" id="hero-title">Where engineering becomes <em>art</em></h1>
-          <p class="lead hero__lead">A curated destination for the world's most coveted automobiles, from hypercars to grand tourers, presented with the precision they were built with.</p>
-          <div class="cluster hero__actions">
-            <a class="btn btn--primary" href="#collection">Explore Collection</a>
-            <a class="btn btn--ghost" href="#introduction">Discover More</a>
-          </div>
-        </div>
+    <section class="scene scene--hero" data-scene="1">
+      <p class="scene__label reveal" data-label>01 — Presence</p>
+      <h1 class="hero-title reveal">Aether<br>GT</h1>
+      <p class="hero-sub reveal">One car. One road. One long exhale.</p>
+      <div class="scroll-cue reveal"><span>Scroll</span><i></i></div>
+    </section>
 
-        <div class="hero__foot">
-          <ul class="hero__tags label" role="list">
-            <li>Hypercars</li>
-            <li>Supercars</li>
-            <li>Grand Tourers</li>
-            <li>Electric Performance</li>
-          </ul>
-          <a class="scroll-cue" href="#introduction">
-            <span class="label">Scroll</span>
-            <span class="scroll-cue__line" aria-hidden="true"></span>
-          </a>
-        </div>
+    <section class="scene" data-scene="2">
+      <span class="ghost-word reveal" aria-hidden="true">Velocity</span>
+      <div class="copy copy--left">
+        <p class="scene__label reveal" data-label>02 — Velocity</p>
+        <h2 class="copy__title reveal">Drawn by wind.</h2>
+        <p class="copy__text reveal">It arrives low and certain, a shape drawn by wind before it was drawn by hand.</p>
       </div>
     </section>
 
-    <!-- ============ Automotive Introduction ============
-         Photography: place a licensed image at assets/images/introduction.jpg (~1800x1200).
-         A CSS fallback is shown automatically until it exists. -->
-    <section class="section intro" id="introduction" aria-labelledby="intro-title">
-      <div class="container intro__grid">
-        <header class="intro__head" data-reveal>
-          <p class="eyebrow">The Automotive World</p>
-          <h2 class="intro__title display-xl" id="intro-title">A world measured in <em>millimetres</em> and decades</h2>
-        </header>
-
-        <figure class="intro__media" data-reveal>
-          <img class="intro__image" src="assets/images/introduction.jpg" alt="A luxury sports car in a dark, cinematic setting" width="1800" height="1200" loading="lazy" decoding="async"
-               onerror="this.closest('.intro__media').classList.add('is-fallback')">
-          <figcaption class="intro__caption label">Plate I &mdash; Form follows ambition</figcaption>
-        </figure>
-
-        <div class="intro__body" data-reveal>
-          <p class="lead">Luxury automobiles are rarely about getting somewhere. They are about how it feels to arrive: the weight of a door, the voice of an engine, the patience of a craftsman.</p>
-          <p class="text-muted">From hand-stitched grand tourers to carbon-fibre hypercars, the finest marques turn engineering into expression, and every detail into a signature.</p>
-        </div>
-
-        <ul class="intro__pillars" role="list">
-          <li data-reveal><span class="label">Heritage</span><p>Century-old houses that still build with the same obsession.</p></li>
-          <li data-reveal><span class="label">Performance</span><p>Engineering shaped by racing, wind tunnels and relentless refinement.</p></li>
-          <li data-reveal><span class="label">Craft</span><p>Leather, metal and carbon, finished by hand to an exacting standard.</p></li>
-        </ul>
+    <section class="scene" data-scene="3">
+      <div class="copy copy--right">
+        <p class="scene__label reveal" data-label>03 — Precision</p>
+        <h2 class="copy__title reveal">One unbroken line.</h2>
+        <p class="copy__text reveal">From nose to tail. Nothing added, nothing wasted.</p>
       </div>
     </section>
 
-    <!-- ============ Immersive 3D Experience (foundation) ============
-         Three.js scene is mounted in [data-xp-stage] by js/scene.js. One car is loaded from data-model
-         (place a lightweight .glb at assets/models/car.glb; see assets/models/README.md).
-         If WebGL or the 3D engine is unavailable, the fallback message below is shown. -->
-    <section class="section xp" id="experience" aria-labelledby="xp-title">
-      <div class="container">
-        <header class="xp__head" data-reveal>
-          <p class="eyebrow">Immersive Experience</p>
-          <h2 class="display-lg" id="xp-title">The <em>studio</em></h2>
-        </header>
-        <div class="xp__stage" data-xp-stage data-model="assets/models/car.glb" role="img" aria-label="3D showroom scene featuring a luxury car">
-          <p class="xp__status label" data-xp-status role="status"><span data-xp-status-text>Preparing 3D scene&hellip;</span><span class="xp__bar" aria-hidden="true"></span></p>
-          <div class="xp__model-fallback" data-xp-model-fallback hidden>
-            <svg class="xp__sil" aria-hidden="true" focusable="false"><use href="#car-silhouette"></use></svg>
-            <p class="label">Vehicle preview unavailable</p>
-          </div>
-          <div class="xp__fallback" data-xp-fallback hidden>
-            <p class="label">3D scene unavailable</p>
-            <p class="text-muted" data-xp-reason>The 3D experience is not available right now.</p>
-          </div>
-          <noscript><p class="xp__noscript text-muted">Enable JavaScript to view the 3D scene.</p></noscript>
-        </div>
+    <section class="scene" data-scene="4">
+      <div class="copy copy--left">
+        <p class="scene__label reveal" data-label>04 — Detail</p>
+        <h2 class="copy__title reveal">A patient wheel.</h2>
+        <p class="copy__text reveal">Wide shoulders, a quiet stance. It sits the way a sprinter waits.</p>
       </div>
     </section>
 
-    <!-- ============ Manufacturers Showcase ============
-         Optional photography: assets/images/brands/<slug>.jpg (~1200x1500), e.g. ferrari.jpg.
-         A typographic fallback is shown for any missing image. -->
-    <section class="section section--raised manufacturers" id="manufacturers" aria-labelledby="mfr-title">
-      <div class="container">
-        <header class="mfr__head">
-          <div data-reveal>
-            <p class="eyebrow">Manufacturers</p>
-            <h2 class="display-lg" id="mfr-title">Houses of <em>distinction</em></h2>
-          </div>
-          <p class="lead mfr__intro" data-reveal>Twelve marques that define the summit of automotive design, engineering and heritage.</p>
-        </header>
-
-        <div class="mfr__layout">
-          <ol class="brand-list" role="list" data-brand-list>
-          <li class="brand is-active" data-brand data-name="Rolls-Royce" data-country="United Kingdom" data-year="1906" data-note="Silent, effortless presence. The benchmark for bespoke grandeur." data-img="assets/images/brands/rolls-royce.jpg" data-reveal>
-            <button class="brand__btn" type="button" aria-pressed="true" aria-controls="brand-preview">
-              <span class="brand__no" aria-hidden="true">01</span>
-              <span class="brand__name">Rolls-Royce</span>
-              <span class="brand__meta label"><span>United Kingdom</span><span>Est. 1906</span></span>
-              <span class="brand__note">Silent, effortless presence. The benchmark for bespoke grandeur.</span>
-            </button>
-          </li>
-          <li class="brand" data-brand data-name="Bentley" data-country="United Kingdom" data-year="1919" data-note="Grand touring with a handcrafted British soul." data-img="assets/images/brands/bentley.jpg" data-reveal>
-            <button class="brand__btn" type="button" aria-pressed="false" aria-controls="brand-preview">
-              <span class="brand__no" aria-hidden="true">02</span>
-              <span class="brand__name">Bentley</span>
-              <span class="brand__meta label"><span>United Kingdom</span><span>Est. 1919</span></span>
-              <span class="brand__note">Grand touring with a handcrafted British soul.</span>
-            </button>
-          </li>
-          <li class="brand" data-brand data-name="Mercedes-Benz" data-country="Germany" data-year="1926" data-note="Technical authority, from the S-Class to the AMG." data-img="assets/images/brands/mercedes-benz.jpg" data-reveal>
-            <button class="brand__btn" type="button" aria-pressed="false" aria-controls="brand-preview">
-              <span class="brand__no" aria-hidden="true">03</span>
-              <span class="brand__name">Mercedes-Benz</span>
-              <span class="brand__meta label"><span>Germany</span><span>Est. 1926</span></span>
-              <span class="brand__note">Technical authority, from the S-Class to the AMG.</span>
-            </button>
-          </li>
-          <li class="brand" data-brand data-name="BMW" data-country="Germany" data-year="1916" data-note="The ultimate driving machine, refined for every road." data-img="assets/images/brands/bmw.jpg" data-reveal>
-            <button class="brand__btn" type="button" aria-pressed="false" aria-controls="brand-preview">
-              <span class="brand__no" aria-hidden="true">04</span>
-              <span class="brand__name">BMW</span>
-              <span class="brand__meta label"><span>Germany</span><span>Est. 1916</span></span>
-              <span class="brand__note">The ultimate driving machine, refined for every road.</span>
-            </button>
-          </li>
-          <li class="brand" data-brand data-name="Porsche" data-country="Germany" data-year="1931" data-note="Everyday-usable sports cars with motorsport precision." data-img="assets/images/brands/porsche.jpg" data-reveal>
-            <button class="brand__btn" type="button" aria-pressed="false" aria-controls="brand-preview">
-              <span class="brand__no" aria-hidden="true">05</span>
-              <span class="brand__name">Porsche</span>
-              <span class="brand__meta label"><span>Germany</span><span>Est. 1931</span></span>
-              <span class="brand__note">Everyday-usable sports cars with motorsport precision.</span>
-            </button>
-          </li>
-          <li class="brand" data-brand data-name="Ferrari" data-country="Italy" data-year="1947" data-note="Racing passion distilled into the prancing horse." data-img="assets/images/brands/ferrari.jpg" data-reveal>
-            <button class="brand__btn" type="button" aria-pressed="false" aria-controls="brand-preview">
-              <span class="brand__no" aria-hidden="true">06</span>
-              <span class="brand__name">Ferrari</span>
-              <span class="brand__meta label"><span>Italy</span><span>Est. 1947</span></span>
-              <span class="brand__note">Racing passion distilled into the prancing horse.</span>
-            </button>
-          </li>
-          <li class="brand" data-brand data-name="Lamborghini" data-country="Italy" data-year="1963" data-note="Theatrical design and V12 drama from Sant'Agata." data-img="assets/images/brands/lamborghini.jpg" data-reveal>
-            <button class="brand__btn" type="button" aria-pressed="false" aria-controls="brand-preview">
-              <span class="brand__no" aria-hidden="true">07</span>
-              <span class="brand__name">Lamborghini</span>
-              <span class="brand__meta label"><span>Italy</span><span>Est. 1963</span></span>
-              <span class="brand__note">Theatrical design and V12 drama from Sant'Agata.</span>
-            </button>
-          </li>
-          <li class="brand" data-brand data-name="Bugatti" data-country="France" data-year="1909" data-note="Uncompromising hypercars where art meets extreme speed." data-img="assets/images/brands/bugatti.jpg" data-reveal>
-            <button class="brand__btn" type="button" aria-pressed="false" aria-controls="brand-preview">
-              <span class="brand__no" aria-hidden="true">08</span>
-              <span class="brand__name">Bugatti</span>
-              <span class="brand__meta label"><span>France</span><span>Est. 1909</span></span>
-              <span class="brand__note">Uncompromising hypercars where art meets extreme speed.</span>
-            </button>
-          </li>
-          <li class="brand" data-brand data-name="Aston Martin" data-country="United Kingdom" data-year="1913" data-note="Sculpted elegance with a cinematic pedigree." data-img="assets/images/brands/aston-martin.jpg" data-reveal>
-            <button class="brand__btn" type="button" aria-pressed="false" aria-controls="brand-preview">
-              <span class="brand__no" aria-hidden="true">09</span>
-              <span class="brand__name">Aston Martin</span>
-              <span class="brand__meta label"><span>United Kingdom</span><span>Est. 1913</span></span>
-              <span class="brand__note">Sculpted elegance with a cinematic pedigree.</span>
-            </button>
-          </li>
-          <li class="brand" data-brand data-name="McLaren" data-country="United Kingdom" data-year="1963" data-note="Carbon-fibre engineering sharpened on the racetrack." data-img="assets/images/brands/mclaren.jpg" data-reveal>
-            <button class="brand__btn" type="button" aria-pressed="false" aria-controls="brand-preview">
-              <span class="brand__no" aria-hidden="true">10</span>
-              <span class="brand__name">McLaren</span>
-              <span class="brand__meta label"><span>United Kingdom</span><span>Est. 1963</span></span>
-              <span class="brand__note">Carbon-fibre engineering sharpened on the racetrack.</span>
-            </button>
-          </li>
-          <li class="brand" data-brand data-name="Audi" data-country="Germany" data-year="1909" data-note="Progressive design and quattro all-weather performance." data-img="assets/images/brands/audi.jpg" data-reveal>
-            <button class="brand__btn" type="button" aria-pressed="false" aria-controls="brand-preview">
-              <span class="brand__no" aria-hidden="true">11</span>
-              <span class="brand__name">Audi</span>
-              <span class="brand__meta label"><span>Germany</span><span>Est. 1909</span></span>
-              <span class="brand__note">Progressive design and quattro all-weather performance.</span>
-            </button>
-          </li>
-          <li class="brand" data-brand data-name="Maserati" data-country="Italy" data-year="1914" data-note="Italian flair, the trident and a distinctive voice." data-img="assets/images/brands/maserati.jpg" data-reveal>
-            <button class="brand__btn" type="button" aria-pressed="false" aria-controls="brand-preview">
-              <span class="brand__no" aria-hidden="true">12</span>
-              <span class="brand__name">Maserati</span>
-              <span class="brand__meta label"><span>Italy</span><span>Est. 1914</span></span>
-              <span class="brand__note">Italian flair, the trident and a distinctive voice.</span>
-            </button>
-          </li>
-          </ol>
-
-          <aside class="brand-preview" id="brand-preview" aria-live="polite" data-brand-preview>
-            <div class="brand-preview__frame">
-              <span class="brand-preview__mono" aria-hidden="true" data-preview-mono>R</span>
-              <img class="brand-preview__img" alt="" width="1200" height="1500" decoding="async" data-preview-img>
-            </div>
-            <div class="brand-preview__info">
-              <p class="label" data-preview-meta></p>
-              <h3 class="brand-preview__name" data-preview-name></h3>
-              <p class="text-muted" data-preview-note></p>
-            </div>
-          </aside>
-        </div>
+    <section class="scene" data-scene="5">
+      <div class="copy copy--right">
+        <p class="scene__label reveal" data-label>05 — Signature</p>
+        <h2 class="copy__title reveal">A blade of light.</h2>
+        <p class="copy__text reveal">A single line, cut thin and cold, sweeping the dark ahead.</p>
       </div>
     </section>
 
-    <!-- ============ Featured Luxury Car Collection ============
-         Photography: place licensed images at assets/images/cars/<id>.jpg (~1600x1100), ids listed in js/cars-data.js.
-         Until they exist, a line-art silhouette fallback is shown. Cards and the detail overlay are rendered from js/cars-data.js. -->
-    <section class="section collection" id="collection" aria-labelledby="collection-title">
-      <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
-        <symbol id="car-silhouette" viewBox="0 0 400 120">
-          <path d="M16 90 C16 76 34 72 66 66 L118 46 C150 34 205 32 240 38 C270 44 294 60 334 66 C368 70 386 76 386 88 L386 94 L16 94 Z"/>
-          <path d="M126 48 L158 40 C188 36 214 37 236 42 L262 56 L134 56 Z"/>
-          <circle cx="92" cy="94" r="20"/><circle cx="310" cy="94" r="20"/>
-        </symbol>
-      </svg>
-
-      <div class="container">
-        <header class="collection__head">
-          <div data-reveal>
-            <p class="eyebrow">Featured Collection</p>
-            <h2 class="display-lg" id="collection-title">Icons of the <em>modern road</em></h2>
-          </div>
-          <p class="lead collection__intro" data-reveal>Eight exceptional automobiles, from electric grandeur to V12 theatre, each a distinct interpretation of luxury performance.</p>
-        </header>
-
-        <div class="fleet" data-cars>
-          <noscript><p class="text-muted">Enable JavaScript to view the featured collection.</p></noscript>
-        </div>
-        <p class="collection__note label">Specifications are manufacturer-quoted and may vary by market.</p>
-      </div>
-
-      <dialog class="car-dialog" data-car-dialog aria-labelledby="car-dialog-title">
-        <button class="car-dialog__close" type="button" data-car-close aria-label="Close details"><span aria-hidden="true"></span></button>
-        <div class="car-dialog__panel">
-          <div class="car-dialog__media" data-dialog-media></div>
-          <div class="car-dialog__info">
-            <p class="eyebrow" data-dialog-eyebrow></p>
-            <h3 class="display-md car-dialog__title" id="car-dialog-title" data-dialog-title></h3>
-            <p class="text-muted" data-dialog-desc></p>
-            <dl class="spec-list" data-dialog-specs></dl>
-            <a class="btn btn--primary car-dialog__cta" href="#contact" data-car-close>Enquire</a>
-          </div>
-        </div>
-      </dialog>
-    </section>
-
-    <!-- ============ Performance & Engineering ============
-         Photography (optional, licensed): assets/images/engineering/hero.jpg (~2000x1000),
-         structure.jpg (~1200x1500), innovation.jpg (~1600x1000).
-         A CSS/silhouette fallback is shown automatically for any missing image. -->
-    <section class="section engineering" id="engineering" aria-labelledby="eng-title">
-      <div class="container">
-        <header class="eng__head">
-          <div data-reveal>
-            <p class="eyebrow">Performance &amp; Engineering</p>
-            <h2 class="eng__title display-xl" id="eng-title">Power, <em>precisely</em> applied</h2>
-          </div>
-          <p class="lead eng__intro" data-reveal>Behind every great automobile is a quiet obsession: lighter structures, cleaner airflow, more intelligent power. This is where luxury is earned.</p>
-        </header>
-
-        <!-- Lead plate -->
-        <figure class="eng__plate" data-reveal>
-          <div class="eng__frame">
-            <img class="eng__img" src="assets/images/engineering/hero.jpg" alt="A luxury hypercar photographed at speed against a dark backdrop" width="2000" height="1000" loading="lazy" decoding="async"
-                 onerror="this.closest('.eng__frame').classList.add('is-fallback')">
-            <svg class="eng__sil" aria-hidden="true" focusable="false"><use href="#car-silhouette"></use></svg>
-          </div>
-          <figcaption class="eng__caption label">Plate II &mdash; Velocity, engineered</figcaption>
-          <dl class="eng__readout">
-            <div><dt>Peak output</dt><dd>1,015<small>PS</small></dd><span class="label">Lamborghini Revuelto</span></div>
-            <div><dt>0&ndash;100 km/h</dt><dd>2.5<small>s</small></dd><span class="label">Porsche 911 Turbo S</span></div>
-            <div><dt>Top speed</dt><dd>350+<small>km/h</small></dd><span class="label">Lamborghini Revuelto</span></div>
-          </dl>
-        </figure>
-
-        <!-- Chapter 01 — Engineering Excellence -->
-        <article class="eng-ch eng-ch--structure" aria-labelledby="eng-ch1">
-          <figure class="eng-ch__media" data-reveal>
-            <div class="eng__frame eng__frame--portrait">
-              <img class="eng__img" src="assets/images/engineering/structure.jpg" alt="Close detail of exposed carbon-fibre bodywork" width="1200" height="1500" loading="lazy" decoding="async"
-                   onerror="this.closest('.eng__frame').classList.add('is-fallback')">
-              <span class="eng__weave" aria-hidden="true"></span>
-            </div>
-          </figure>
-          <div class="eng-ch__body" data-reveal>
-            <p class="eng-ch__no" aria-hidden="true">01</p>
-            <p class="eyebrow">Engineering Excellence</p>
-            <h3 class="eng-ch__title" id="eng-ch1">Strength without <em>weight</em></h3>
-            <p class="text-muted">Carbon-fibre monocoques and structures grown from motorsport give the finest cars their rigidity, and their poise. Every gram removed is a corner made sharper.</p>
-            <ul class="eng-tags label" role="list">
-              <li>Carbon-fibre monocoque</li>
-              <li>Active aerodynamics</li>
-              <li>Hand-built engines</li>
-            </ul>
-            <p class="eng-ch__note label">McLaren 750S &middot; Lamborghini Revuelto</p>
-          </div>
-        </article>
-
-        <!-- Chapter 02 — High Performance -->
-        <article class="eng-ch eng-ch--power" aria-labelledby="eng-ch2" data-reveal>
-          <div class="eng-ch__body">
-            <p class="eng-ch__no" aria-hidden="true">02</p>
-            <p class="eyebrow">High Performance</p>
-            <h3 class="eng-ch__title" id="eng-ch2">Output that <em>redefines</em> the ordinary</h3>
-            <p class="text-muted">Four-digit horsepower, sub-three-second sprints and torque delivered in a single seamless surge, yet tuned to be driven every day.</p>
-          </div>
-          <div class="power" role="group" aria-label="Power output comparison in metric horsepower">
-            <p class="label power__title">Power output &middot; PS</p>
-            <ul class="power__list" role="list">
-              <li class="power__row" style="--v:100%"><span class="power__name">Lamborghini Revuelto</span><span class="power__bar" aria-hidden="true"></span><span class="power__val">1,015</span></li>
-              <li class="power__row" style="--v:81.8%"><span class="power__name">Ferrari 296 GTB</span><span class="power__bar" aria-hidden="true"></span><span class="power__val">830</span></li>
-              <li class="power__row" style="--v:73.9%"><span class="power__name">McLaren 750S</span><span class="power__bar" aria-hidden="true"></span><span class="power__val">750</span></li>
-              <li class="power__row" style="--v:70%"><span class="power__name">Porsche 911 Turbo S</span><span class="power__bar" aria-hidden="true"></span><span class="power__val">711</span></li>
-              <li class="power__row" style="--v:67%"><span class="power__name">Aston Martin DB12</span><span class="power__bar" aria-hidden="true"></span><span class="power__val">680</span></li>
-            </ul>
-          </div>
-        </article>
-
-        <!-- Chapter 03 — Automotive Innovation -->
-        <article class="eng-ch eng-ch--innovation" aria-labelledby="eng-ch3">
-          <div class="eng-ch__body" data-reveal>
-            <p class="eng-ch__no" aria-hidden="true">03</p>
-            <p class="eyebrow">Automotive Innovation</p>
-            <h3 class="eng-ch__title" id="eng-ch3">The next era, <em>electrified</em></h3>
-            <p class="text-muted">Hybrid systems add instant torque to legendary engines, while pure-electric luxury brings silence and effortless thrust. The soul stays; the possibilities widen.</p>
-            <dl class="eng-facts">
-              <div><dt>Plug-in hybrid V12</dt><dd>Revuelto</dd></div>
-              <div><dt>Electric torque</dt><dd>900 Nm &middot; Spectre</dd></div>
-              <div><dt>T-Hybrid flat-six</dt><dd>911 Turbo S</dd></div>
-            </dl>
-          </div>
-          <figure class="eng-ch__media" data-reveal>
-            <div class="eng__frame eng__frame--wide">
-              <img class="eng__img" src="assets/images/engineering/innovation.jpg" alt="A luxury electric coupé illuminated in a dark studio" width="1600" height="1000" loading="lazy" decoding="async"
-                   onerror="this.closest('.eng__frame').classList.add('is-fallback')">
-              <svg class="eng__sil" aria-hidden="true" focusable="false"><use href="#car-silhouette"></use></svg>
-            </div>
-            <figcaption class="eng__caption label">Plate III &mdash; Silent authority</figcaption>
-          </figure>
-        </article>
-
-        <p class="eng__note label">Figures are manufacturer-quoted and may vary by market.</p>
+    <section class="scene" data-scene="6">
+      <div class="copy copy--left">
+        <p class="scene__label reveal" data-label>06 — Departure</p>
+        <h2 class="copy__title reveal">Only an ember.</h2>
+        <p class="copy__text reveal">Then it leaves, and the road keeps a red glow in the fog.</p>
       </div>
     </section>
 
-    <!-- ============ Craftsmanship & Automotive Design ============
-         Photography (optional, licensed) in assets/images/craftsmanship/:
-         interior.jpg (~2000x1250), leather.jpg (~1200x1500), precision.jpg (~1000x1000), exterior.jpg (~2400x1100).
-         A textured CSS fallback is shown automatically for any missing image. -->
-    <section class="section section--raised craft" id="craftsmanship" aria-labelledby="craft-title">
-      <div class="container">
-        <header class="craft__head">
-          <div data-reveal>
-            <p class="eyebrow">Craftsmanship &amp; Design</p>
-            <h2 class="craft__title display-xl" id="craft-title">Made by hand, <em>judged</em> by eye</h2>
-          </div>
-          <p class="lead craft__intro" data-reveal>In a world of automation, the most coveted details are still human: a seam pulled tight, a surface sanded true, a line drawn once and never revised.</p>
-        </header>
-
-        <!-- Interiors: asymmetric image composition -->
-        <div class="craft__interior">
-          <figure class="craft__fig craft__fig--cabin" data-reveal>
-            <div class="craft__frame craft__frame--cabin">
-              <img class="craft__img" src="assets/images/craftsmanship/interior.jpg" alt="A handcrafted luxury cabin with leather seats and a wood-trimmed dashboard" width="2000" height="1250" loading="lazy" decoding="async"
-                   onerror="this.closest('.craft__frame').classList.add('is-fallback')">
-            </div>
-            <figcaption class="craft__caption label">Plate IV &mdash; The cabin</figcaption>
-          </figure>
-
-          <figure class="craft__fig craft__fig--leather" data-reveal>
-            <div class="craft__frame craft__frame--leather">
-              <img class="craft__img" src="assets/images/craftsmanship/leather.jpg" alt="Close-up of diamond-quilted leather with fine contrast stitching" width="1200" height="1500" loading="lazy" decoding="async"
-                   onerror="this.closest('.craft__frame').classList.add('is-fallback')">
-            </div>
-            <figcaption class="craft__caption label">Plate V &mdash; Hand-stitched leather</figcaption>
-          </figure>
-
-          <figure class="craft__fig craft__fig--precision" data-reveal>
-            <div class="craft__frame craft__frame--precision">
-              <img class="craft__img" src="assets/images/craftsmanship/precision.jpg" alt="Close-up of a machined aluminium control dial with knurled edge" width="1000" height="1000" loading="lazy" decoding="async"
-                     onerror="this.closest('.craft__frame').classList.add('is-fallback')">
-            </div>
-            <figcaption class="craft__caption label">Plate VI &mdash; Machined to tolerance</figcaption>
-          </figure>
-
-          <div class="craft__copy" data-reveal>
-            <p class="eyebrow">Handcrafted Interiors</p>
-            <h3 class="craft__subtitle">A cabin shaped around <em>touch</em></h3>
-            <p class="text-muted">Hides are selected, cut and stitched by hand; wood is matched grain to grain; metal is machined until every dial turns with the same quiet resistance. Precision is something you feel before you notice it.</p>
-          </div>
-        </div>
-
-        <!-- Exterior: full-width sculpted plate with overlaid text -->
-        <figure class="craft__fig craft__fig--exterior" data-reveal>
-          <div class="craft__frame craft__frame--exterior">
-            <img class="craft__img" src="assets/images/craftsmanship/exterior.jpg" alt="The sculpted flank of a luxury coupé, light tracing its bodywork" width="2400" height="1100" loading="lazy" decoding="async"
-                 onerror="this.closest('.craft__frame').classList.add('is-fallback')">
-          </div>
-          <figcaption class="craft__exterior-copy">
-            <span class="label">Exterior Design &middot; Plate VII</span>
-            <span class="craft__exterior-title">Sculpted in <em>light</em></span>
-            <span class="craft__exterior-text">Surfaces are modelled in clay, refined in the wind tunnel and finished until a single reflection can run the length of the car, unbroken.</span>
-          </figcaption>
-        </figure>
-
-        <!-- Bespoke: typographic index + material swatches -->
-        <div class="atelier">
-          <div class="atelier__intro" data-reveal>
-            <p class="eyebrow">Bespoke Customization</p>
-            <h3 class="craft__subtitle">Your car, <em>commissioned</em></h3>
-            <p class="text-muted">The finest houses build to order. Every material, colour and finish can be specified, so no two cars need ever be alike.</p>
-            <ul class="swatches" role="list" aria-hidden="true">
-              <li class="swatch swatch--leather"></li>
-              <li class="swatch swatch--wood"></li>
-              <li class="swatch swatch--metal"></li>
-              <li class="swatch swatch--carbon"></li>
-              <li class="swatch swatch--paint"></li>
-            </ul>
-          </div>
-
-          <ol class="materials" role="list">
-            <li class="material" data-reveal><span class="material__no" aria-hidden="true">01</span><h4 class="material__name">Premium leather</h4><p class="material__text">Full-grain hides, quilted, perforated or contrast-stitched to taste.</p></li>
-            <li class="material" data-reveal><span class="material__no" aria-hidden="true">02</span><h4 class="material__name">Open-pore wood</h4><p class="material__text">Veneers book-matched so the grain flows across the cabin.</p></li>
-            <li class="material" data-reveal><span class="material__no" aria-hidden="true">03</span><h4 class="material__name">Machined metal</h4><p class="material__text">Aluminium and steel, turned, knurled and brushed by the finest tolerances.</p></li>
-            <li class="material" data-reveal><span class="material__no" aria-hidden="true">04</span><h4 class="material__name">Carbon fibre</h4><p class="material__text">Exposed weaves, lacquered to depth, as structure and as ornament.</p></li>
-            <li class="material" data-reveal><span class="material__no" aria-hidden="true">05</span><h4 class="material__name">Signature paint</h4><p class="material__text">Multi-layer finishes, polished by hand, matched to any commissioned colour.</p></li>
-          </ol>
-        </div>
-      </div>
-    </section>
-
-    <!-- ============ Final Call to Action ============
-         Photography (optional, licensed): assets/images/cta.jpg (~2400x1350).
-         A CSS atmosphere fallback is shown automatically until it exists. -->
-    <section class="cta" id="cta" aria-labelledby="cta-title">
-      <div class="cta__media" aria-hidden="true">
-        <img class="cta__image" src="assets/images/cta.jpg" alt="" width="2400" height="1350" loading="lazy" decoding="async"
-             onerror="this.closest('.cta').classList.add('cta--fallback')">
-      </div>
-      <div class="container cta__inner">
-        <p class="eyebrow" data-reveal>The Complete Collection</p>
-        <h2 class="cta__title" id="cta-title" data-reveal>The road ahead is <em>extraordinary</em></h2>
-        <p class="lead cta__lead" data-reveal>Eight icons, a dozen great houses, and a standard of craft that does not compromise. Begin with the collection, or speak with us about the car that was built for you.</p>
-        <div class="cluster cta__actions" data-reveal>
-          <a class="btn btn--primary" href="#collection">Explore Collection</a>
-          <a class="btn btn--ghost" href="#contact">Make an Enquiry</a>
-        </div>
-      </div>
-    </section>
-
-    <!-- ============ Contact (demo form: validated in the browser only, nothing is sent) ============ -->
-    <section class="section contact" id="contact" aria-labelledby="contact-title">
-      <div class="container contact__grid">
-        <header class="contact__intro" data-reveal>
-          <p class="eyebrow">Contact</p>
-          <h2 class="display-lg" id="contact-title">Begin a <em>conversation</em></h2>
-          <p class="lead">Tell us which automobile has caught your eye, or simply what you are looking for. This is a demonstration form.</p>
-          <p class="contact__demo label"><span class="contact__dot" aria-hidden="true"></span>Demo only &mdash; no message is actually sent or stored.</p>
-        </header>
-
-        <div class="contact__panel" data-reveal>
-          <form class="form" data-contact-form novalidate>
-            <div class="field">
-              <label class="field__label" for="contact-name">Full name</label>
-              <input class="field__input" id="contact-name" name="name" type="text" autocomplete="name" required minlength="2" aria-describedby="contact-name-err">
-              <p class="field__error" id="contact-name-err" role="alert"></p>
-            </div>
-            <div class="field">
-              <label class="field__label" for="contact-email">Email address</label>
-              <input class="field__input" id="contact-email" name="email" type="email" autocomplete="email" inputmode="email" required aria-describedby="contact-email-err">
-              <p class="field__error" id="contact-email-err" role="alert"></p>
-            </div>
-            <div class="field">
-              <label class="field__label" for="contact-message">Message</label>
-              <textarea class="field__input field__input--area" id="contact-message" name="message" rows="5" required minlength="10" aria-describedby="contact-message-err"></textarea>
-              <p class="field__error" id="contact-message-err" role="alert"></p>
-            </div>
-            <div class="form__foot">
-              <button class="btn btn--primary" type="submit">Send Message</button>
-              <p class="form__hint label">Demo form &middot; nothing is transmitted</p>
-            </div>
-          </form>
-
-          <div class="form-success" data-contact-success tabindex="-1" hidden>
-            <span class="form-success__mark" aria-hidden="true"></span>
-            <h3 class="form-success__title" data-success-title>Thank you</h3>
-            <p class="text-muted">Your message passed validation. As this is a demonstration, <strong>no message was sent</strong> and nothing has been stored.</p>
-            <button class="btn btn--ghost form-success__again" type="button" data-contact-reset>Write another</button>
-          </div>
-        </div>
-      </div>
+    <section class="scene scene--finale" data-scene="7">
+      <p class="scene__label reveal" data-label>07 — Legacy</p>
+      <h2 class="finale-title reveal">Built to be<br>remembered.</h2>
+      <p class="finale-sub reveal">Aether GT</p>
     </section>
 
   </main>
 
-  <!-- ============ Footer ============ -->
-  <footer class="site-footer">
-    <div class="container">
-      <div class="site-footer__top">
-        <div class="site-footer__brand">
-          <a class="wordmark" href="#home" aria-label="Wordmark placeholder, back to top">
-            <span class="wordmark__mark" aria-hidden="true"></span>
-            <span class="wordmark__text">Wordmark</span>
-          </a>
-          <p class="site-footer__tag">Where engineering becomes <em>art</em>.</p>
-          <p class="text-muted site-footer__desc">A curated destination for the world&rsquo;s most coveted automobiles, presented with the precision they were built with.</p>
-        </div>
-        <nav class="site-footer__nav" aria-label="Footer">
-          <h2 class="label site-footer__heading">Explore</h2>
-          <ul role="list">
-            <li><a href="#home">Home</a></li>
-            <li><a href="#introduction">Introduction</a></li>
-            <li><a href="#manufacturers">Manufacturers</a></li>
-            <li><a href="#collection">Collection</a></li>
-            <li><a href="#engineering">Engineering</a></li>
-            <li><a href="#craftsmanship">Craftsmanship</a></li>
-            <li><a href="#contact">Contact</a></li>
-          </ul>
-        </nav>
-      </div>
-      <div class="site-footer__bottom label">
-        <p>&copy; <span data-year>2026</span> Wordmark. All rights reserved.</p>
-        <a class="site-footer__top-link" href="#home">Back to top <span aria-hidden="true">&uarr;</span></a>
-      </div>
-    </div>
-  </footer>
-
-  <!-- Three.js and GSAP will be added in later phases -->
-  <script src="js/cars-data.js" defer></script>
-  <script src="js/main.js" defer></script>
-  <script src="js/scene.js" defer></script>
+  <script nomodule>document.documentElement.className = "is-ready no-webgl";</script>
+  <noscript><style>.loader{display:none}</style></noscript>
+  <script type="module" src="js/main.js"></script>
 </body>
 </html>
